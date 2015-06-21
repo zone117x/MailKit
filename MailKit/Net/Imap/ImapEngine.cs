@@ -570,7 +570,7 @@ namespace MailKit.Net.Imap {
 						OnAlert (code.Message);
 				} else if (token.Type != ImapTokenType.Eoln) {
 					// throw away any remaining text up until the end of the line
-					ReadLine (cancellationToken);
+					await ReadLine (cancellationToken);
 				}
 			} catch {
 				Disconnect ();
@@ -617,25 +617,19 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		public string ReadLine (CancellationToken cancellationToken)
+		public async Task<string> ReadLine (CancellationToken cancellationToken)
 		{
 			if (Stream == null)
 				throw new InvalidOperationException ();
 
 			using (var memory = new MemoryStream ()) {
-				int offset, count;
-				byte[] buf;
+				await Stream.ReadLine (memory, cancellationToken);
 
-				while (!Stream.ReadLine (out buf, out offset, out count, cancellationToken))
-					memory.Write (buf, offset, count);
-
-				memory.Write (buf, offset, count);
-
-				count = (int) memory.Length;
+				int count = (int) memory.Length;
 #if !NETFX_CORE
-				buf = memory.GetBuffer ();
+				var buf = memory.GetBuffer ();
 #else
-				buf = memory.ToArray ();
+				var buf = memory.ToArray ();
 #endif
 
 				try {
@@ -1324,7 +1318,7 @@ namespace MailKit.Net.Imap {
 				throw UnexpectedToken (token, false);
 			}
 
-			code.Message = ReadLine (cancellationToken).Trim ();
+			code.Message = (await ReadLine (cancellationToken)).Trim ();
 
 			return code;
 		}
@@ -1431,7 +1425,7 @@ namespace MailKit.Net.Imap {
 							current.RespCodes.Add (code);
 					}
 
-					ReadLine (cancellationToken);
+					await ReadLine (cancellationToken);
 
 					if (current != null) {
 						current.Bye = true;
@@ -1475,7 +1469,7 @@ namespace MailKit.Net.Imap {
 						if (current != null)
 							current.RespCodes.Add (code);
 					} else if (token.Type != ImapTokenType.Eoln) {
-						var text = ReadLine (cancellationToken);
+						var text = await ReadLine (cancellationToken);
 
 						if (current != null)
 							current.ResultText = text.Trim ();

@@ -832,10 +832,7 @@ namespace MailKit.Net.Imap {
 		/// <remarks>
 		/// This method should be called in a loop until it returns <c>true</c>.
 		/// </remarks>
-		/// <returns><c>true</c>, if reading the line is complete, <c>false</c> otherwise.</returns>
-		/// <param name="buffer">The buffer containing the line data.</param>
-		/// <param name="offset">The offset into the buffer containing bytes read.</param>
-		/// <param name="count">The number of bytes read.</param>
+		/// <param name="stream">The stream to read the line into.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The stream has been disposed.
@@ -846,7 +843,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="System.IO.IOException">
 		/// An I/O error occurred.
 		/// </exception>
-		internal bool ReadLine (out byte[] buffer, out int offset, out int count, CancellationToken cancellationToken)
+		internal async Task ReadLine (Stream stream, CancellationToken cancellationToken)
 		{
 			CheckDisposed ();
 
@@ -854,32 +851,29 @@ namespace MailKit.Net.Imap {
 				fixed (byte* inbuf = input) {
 					byte* start, inptr, inend;
 
-					// we need at least 1 byte: "\n"
-					ReadAhead (1, cancellationToken).Result;
+					do {
+						// we need at least 1 byte: "\n"
+						await ReadAhead (1, cancellationToken);
 
-					offset = inputIndex;
-					buffer = input;
+						start = inbuf + inputIndex;
+						inend = inbuf + inputEnd;
+						*inend = (byte) '\n';
+						inptr = start;
 
-					start = inbuf + inputIndex;
-					inend = inbuf + inputEnd;
-					*inend = (byte) '\n';
-					inptr = start;
+						// FIXME: use SIMD to optimize this
+						while (*inptr != (byte) '\n')
+							inptr++;
 
-					// FIXME: use SIMD to optimize this
-					while (*inptr != (byte) '\n')
-						inptr++;
+						int count = (int) (inptr - start);
 
-					inputIndex = (int) (inptr - inbuf);
-					count = (int) (inptr - start);
+						if (inptr < inend) {
+							// consume the '\n'
+							count++;
+						}
 
-					if (inptr == inend)
-						return false;
-
-					// consume the '\n'
-					inputIndex++;
-					count++;
-
-					return true;
+						stream.Write (input, inputIndex, count);
+						inputIndex += count;
+					} while (inptr == inend);
 				}
 			}
 		}

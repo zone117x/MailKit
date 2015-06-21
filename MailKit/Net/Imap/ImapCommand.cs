@@ -648,7 +648,7 @@ namespace MailKit.Net.Imap {
 
 				if (token.Type == ImapTokenType.Atom && token.Value.ToString () == "+") {
 					// we've gotten a continuation response from the server
-					var text = Engine.ReadLine (CancellationToken).Trim ();
+					var text = (await Engine.ReadLine (CancellationToken)).Trim ();
 
 					// if we've got a Literal pending, the '+' means we can send it now...
 					if (!supportsLiteralPlus && parts[current].Literal != null) {
@@ -685,7 +685,7 @@ namespace MailKit.Net.Imap {
 
 						if (token.Type != ImapTokenType.Eoln) {
 							// consume the rest of the line...
-							Engine.ReadLine (CancellationToken);
+							await Engine.ReadLine (CancellationToken);
 							break;
 						}
 					} else {
