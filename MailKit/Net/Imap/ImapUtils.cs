@@ -30,6 +30,7 @@ using System.Text;
 using System.Threading;
 using System.Diagnostics;
 using System.Globalization;
+using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 
@@ -300,9 +301,9 @@ namespace MailKit.Net.Imap {
 		/// <param name="engine">The IMAP engine.</param>
 		/// <param name="ic">The IMAP command.</param>
 		/// <param name="index">The index.</param>
-		public static void ParseImplementation (ImapEngine engine, ImapCommand ic, int index)
+		public static async Task ParseImplementation (ImapEngine engine, ImapCommand ic, int index)
 		{
-			var token = engine.ReadToken (ic.CancellationToken);
+			var token = await engine.ReadToken (ic.CancellationToken);
 			var implementation = new ImapImplementation ();
 
 			ic.UserData = implementation;
@@ -313,19 +314,19 @@ namespace MailKit.Net.Imap {
 			if (token.Type != ImapTokenType.OpenParen)
 				throw ImapEngine.UnexpectedToken (token, false);
 
-			token = engine.PeekToken (ic.CancellationToken);
+			token = await engine.PeekToken (ic.CancellationToken);
 
 			while (token.Type != ImapTokenType.CloseParen) {
-				var property = ImapUtils.ReadStringToken (engine, ic.CancellationToken);
-				var value = ImapUtils.ReadNStringToken (engine, false, ic.CancellationToken);
+				var property = await ImapUtils.ReadStringToken (engine, ic.CancellationToken);
+				var value = await ImapUtils.ReadNStringToken (engine, false, ic.CancellationToken);
 
 				implementation.Properties[property] = value;
 
-				token = engine.PeekToken (ic.CancellationToken);
+				token = await engine.PeekToken (ic.CancellationToken);
 			}
 
 			// read the ')' token
-			engine.ReadToken (ic.CancellationToken);
+			await engine.ReadToken (ic.CancellationToken);
 		}
 
 		/// <summary>
@@ -368,9 +369,9 @@ namespace MailKit.Net.Imap {
 		/// <param name="engine">The IMAP engine.</param>
 		/// <param name="ic">The IMAP command.</param>
 		/// <param name="index">The index.</param>
-		public static void ParseFolderList (ImapEngine engine, ImapCommand ic, int index)
+		public static async Task ParseFolderList (ImapEngine engine, ImapCommand ic, int index)
 		{
-			var token = engine.ReadToken (ic.CancellationToken);
+			var token = await engine.ReadToken (ic.CancellationToken);
 			var list = (List<ImapFolder>) ic.UserData;
 			var attrs = FolderAttributes.None;
 			string encodedName;
@@ -381,7 +382,7 @@ namespace MailKit.Net.Imap {
 			if (token.Type != ImapTokenType.OpenParen)
 				throw ImapEngine.UnexpectedToken (token, false);
 
-			token = engine.ReadToken (ic.CancellationToken);
+			token = await engine.ReadToken (ic.CancellationToken);
 
 			while (token.Type == ImapTokenType.Flag || token.Type == ImapTokenType.Atom) {
 				string atom = (string) token.Value;
@@ -411,14 +412,14 @@ namespace MailKit.Net.Imap {
 				case "\\Starred":       attrs |= FolderAttributes.Flagged; break;
 				}
 
-				token = engine.ReadToken (ic.CancellationToken);
+				token = await engine.ReadToken (ic.CancellationToken);
 			}
 
 			if (token.Type != ImapTokenType.CloseParen)
 				throw ImapEngine.UnexpectedToken (token, false);
 
 			// parse the path delimeter
-			token = engine.ReadToken (ic.CancellationToken);
+			token = await engine.ReadToken (ic.CancellationToken);
 
 			if (token.Type == ImapTokenType.QString) {
 				var qstring = (string) token.Value;
@@ -431,11 +432,11 @@ namespace MailKit.Net.Imap {
 			}
 
 			// parse the folder name
-			token = engine.ReadToken (ic.CancellationToken);
+			token = await engine.ReadToken (ic.CancellationToken);
 
 			switch (token.Type) {
 			case ImapTokenType.Literal:
-				encodedName = engine.ReadLiteral (ic.CancellationToken);
+				encodedName = await engine.ReadLiteral (ic.CancellationToken);
 				break;
 			case ImapTokenType.QString:
 			case ImapTokenType.Atom:
@@ -459,13 +460,13 @@ namespace MailKit.Net.Imap {
 			list.Add (folder);
 		}
 
-		static string ReadStringToken (ImapEngine engine, CancellationToken cancellationToken)
+		static async Task<string> ReadStringToken (ImapEngine engine, CancellationToken cancellationToken)
 		{
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 
 			switch (token.Type) {
 			case ImapTokenType.Literal:
-				return engine.ReadLiteral (cancellationToken);
+				return await engine.ReadLiteral (cancellationToken);
 			case ImapTokenType.QString:
 			case ImapTokenType.Atom:
 				return (string) token.Value;
@@ -474,14 +475,14 @@ namespace MailKit.Net.Imap {
 			}
 		}
 
-		static string ReadNStringToken (ImapEngine engine, bool rfc2047, CancellationToken cancellationToken)
+		static async Task<string> ReadNStringToken (ImapEngine engine, bool rfc2047, CancellationToken cancellationToken)
 		{
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 			string value;
 
 			switch (token.Type) {
 			case ImapTokenType.Literal:
-				value = engine.ReadLiteral (cancellationToken);
+				value = await engine.ReadLiteral (cancellationToken);
 				break;
 			case ImapTokenType.QString:
 			case ImapTokenType.Atom:
@@ -496,9 +497,9 @@ namespace MailKit.Net.Imap {
 			return rfc2047 ? Rfc2047.DecodeText (Latin1.GetBytes (value)) : value;
 		}
 
-		static uint ReadNumber (ImapEngine engine, CancellationToken cancellationToken)
+		static async Task<uint> ReadNumber (ImapEngine engine, CancellationToken cancellationToken)
 		{
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 			uint number;
 
 			if (token.Type != ImapTokenType.Atom || !uint.TryParse ((string) token.Value, out number))
@@ -520,21 +521,21 @@ namespace MailKit.Net.Imap {
 			return false;
 		}
 
-		static void ParseParameterList (StringBuilder builder, ImapEngine engine, CancellationToken cancellationToken)
+		static async Task ParseParameterList (StringBuilder builder, ImapEngine engine, CancellationToken cancellationToken)
 		{
 			ImapToken token;
 
 			do {
-				token = engine.PeekToken (cancellationToken);
+				token = await engine.PeekToken (cancellationToken);
 
 				if (token.Type == ImapTokenType.CloseParen)
 					break;
 
-				var name = ReadStringToken (engine, cancellationToken);
+				var name = await ReadStringToken (engine, cancellationToken);
 
 				// Note: technically, the value should also be a 'string' token and not an 'nstring',
 				// but issue #124 reveals a server that is sending NIL for boundary values.
-				var value = ReadNStringToken (engine, false, cancellationToken) ?? string.Empty;
+				var value = await ReadNStringToken (engine, false, cancellationToken) ?? string.Empty;
 
 				builder.Append ("; ").Append (name).Append ('=');
 
@@ -545,33 +546,28 @@ namespace MailKit.Net.Imap {
 			} while (true);
 
 			// read the ')'
-			engine.ReadToken (cancellationToken);
+			await engine.ReadToken (cancellationToken);
 		}
 
-		static bool ParseContentType (ImapEngine engine, CancellationToken cancellationToken, out ContentType contentType, out string value)
+		static async Task<object> ParseContentType (ImapEngine engine, CancellationToken cancellationToken)
 		{
-			var type = ReadStringToken (engine, cancellationToken);
-			var token = engine.PeekToken (cancellationToken);
-
-			value = null;
+			var type = await ReadStringToken (engine, cancellationToken);
+			var token = await engine.PeekToken (cancellationToken);
+			ContentType contentType;
 
 			if (engine.IsGMail && token.Type == ImapTokenType.OpenParen) {
 				// Note: GMail's IMAP server implementation breaks when it encounters
 				// nested multiparts with the same boundary and returns a BODYSTRUCTURE
 				// like the example in https://github.com/jstedfast/MailKit/issues/205
-				contentType = null;
-				value = type;
-				return false;
+				return type;
 			}
 
-			var subtype = ReadStringToken (engine, cancellationToken);
+			var subtype = await ReadStringToken (engine, cancellationToken);
 
-			token = engine.ReadToken (cancellationToken);
+			token = await engine.ReadToken (cancellationToken);
 
-			if (token.Type == ImapTokenType.Nil) {
-				contentType = new ContentType (type, subtype);
-				return true;
-			}
+			if (token.Type == ImapTokenType.Nil)
+				return new ContentType (type, subtype);
 
 			if (token.Type != ImapTokenType.OpenParen)
 				throw ImapEngine.UnexpectedToken (token, false);
@@ -579,17 +575,17 @@ namespace MailKit.Net.Imap {
 			var builder = new StringBuilder ();
 			builder.AppendFormat ("{0}/{1}", type, subtype);
 
-			ParseParameterList (builder, engine, cancellationToken);
+			await ParseParameterList (builder, engine, cancellationToken);
 
 			if (!ContentType.TryParse (builder.ToString (), out contentType))
 				contentType = new ContentType (type, subtype);
 
-			return true;
+			return contentType;
 		}
 
-		static ContentDisposition ParseContentDisposition (ImapEngine engine, CancellationToken cancellationToken)
+		static async Task<ContentDisposition> ParseContentDisposition (ImapEngine engine, CancellationToken cancellationToken)
 		{
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 
 			if (token.Type == ImapTokenType.Nil)
 				return null;
@@ -597,18 +593,18 @@ namespace MailKit.Net.Imap {
 			if (token.Type != ImapTokenType.OpenParen)
 				throw ImapEngine.UnexpectedToken (token, false);
 
-			var dsp = ReadStringToken (engine, cancellationToken);
+			var dsp = await ReadStringToken (engine, cancellationToken);
 			var builder = new StringBuilder (dsp);
 			ContentDisposition disposition;
 
-			token = engine.ReadToken (cancellationToken);
+			token = await engine.ReadToken (cancellationToken);
 
 			if (token.Type == ImapTokenType.OpenParen)
-				ParseParameterList (builder, engine, cancellationToken);
+				await ParseParameterList (builder, engine, cancellationToken);
 			else if (token.Type != ImapTokenType.Nil)
 				throw ImapEngine.UnexpectedToken (token, false);
 
-			token = engine.ReadToken (cancellationToken);
+			token = await engine.ReadToken (cancellationToken);
 
 			if (token.Type != ImapTokenType.CloseParen)
 				throw ImapEngine.UnexpectedToken (token, false);
@@ -619,15 +615,15 @@ namespace MailKit.Net.Imap {
 			return disposition;
 		}
 
-		static string[] ParseContentLanguage (ImapEngine engine, CancellationToken cancellationToken)
+		static async Task<string[]> ParseContentLanguage (ImapEngine engine, CancellationToken cancellationToken)
 		{
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 			var languages = new List<string> ();
 			string language;
 
 			switch (token.Type) {
 			case ImapTokenType.Literal:
-				language = engine.ReadLiteral (cancellationToken);
+				language = await engine.ReadLiteral (cancellationToken);
 				languages.Add (language);
 				break;
 			case ImapTokenType.QString:
@@ -639,17 +635,17 @@ namespace MailKit.Net.Imap {
 				return null;
 			case ImapTokenType.OpenParen:
 				do {
-					token = engine.PeekToken (cancellationToken);
+					token = await engine.PeekToken (cancellationToken);
 
 					if (token.Type == ImapTokenType.CloseParen)
 						break;
 
-					language = ReadStringToken (engine, cancellationToken);
+					language = await ReadStringToken (engine, cancellationToken);
 					languages.Add (language);
 				} while (true);
 
 				// read the ')'
-				engine.ReadToken (cancellationToken);
+				await engine.ReadToken (cancellationToken);
 				break;
 			default:
 				throw ImapEngine.UnexpectedToken (token, false);
@@ -658,9 +654,9 @@ namespace MailKit.Net.Imap {
 			return languages.ToArray ();
 		}
 
-		static Uri ParseContentLocation (ImapEngine engine, CancellationToken cancellationToken)
+		static async Task<Uri> ParseContentLocation (ImapEngine engine, CancellationToken cancellationToken)
 		{
-			var location = ReadNStringToken (engine, false, cancellationToken);
+			var location = await ReadNStringToken (engine, false, cancellationToken);
 
 			if (string.IsNullOrWhiteSpace (location))
 				return null;
@@ -674,26 +670,26 @@ namespace MailKit.Net.Imap {
 			return null;
 		}
 
-		static void SkipBodyExtensions (ImapEngine engine, CancellationToken cancellationToken)
+		static async Task SkipBodyExtensions (ImapEngine engine, CancellationToken cancellationToken)
 		{
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 
 			switch (token.Type) {
 			case ImapTokenType.OpenParen:
 				do {
-					token = engine.PeekToken (cancellationToken);
+					token = await engine.PeekToken (cancellationToken);
 
 					if (token.Type == ImapTokenType.CloseParen)
 						break;
 
-					SkipBodyExtensions (engine, cancellationToken);
+					await SkipBodyExtensions (engine, cancellationToken);
 				} while (true);
 
 				// read the ')'
-				engine.ReadToken (cancellationToken);
+				await engine.ReadToken (cancellationToken);
 				break;
 			case ImapTokenType.Literal:
-				engine.ReadLiteral (cancellationToken);
+				await engine.ReadLiteral (cancellationToken);
 				break;
 			case ImapTokenType.QString:
 			case ImapTokenType.Atom:
@@ -704,7 +700,7 @@ namespace MailKit.Net.Imap {
 			}
 		}
 
-		static BodyPart ParseMultipart (ImapEngine engine, string path, string subtype, CancellationToken cancellationToken)
+		static async Task<BodyPart> ParseMultipart (ImapEngine engine, string path, string subtype, CancellationToken cancellationToken)
 		{
 			var prefix = path.Length > 0 ? path + "." : string.Empty;
 			var body = new BodyPartMultipart ();
@@ -714,21 +710,21 @@ namespace MailKit.Net.Imap {
 			// Note: if subtype is not null, then we are working around a GMail bug...
 			if (subtype == null) {
 				do {
-					body.BodyParts.Add (ParseBody (engine, prefix + index, cancellationToken));
-					token = engine.PeekToken (cancellationToken);
+					body.BodyParts.Add (await ParseBody (engine, prefix + index, cancellationToken));
+					token = await engine.PeekToken (cancellationToken);
 					index++;
 				} while (token.Type == ImapTokenType.OpenParen);
 
-				subtype = ReadStringToken (engine, cancellationToken);
+				subtype = await ReadStringToken (engine, cancellationToken);
 			}
 
 			body.ContentType = new ContentType ("multipart", subtype);
 			body.PartSpecifier = path;
 
-			token = engine.PeekToken (cancellationToken);
+			token = await engine.PeekToken (cancellationToken);
 
 			if (token.Type != ImapTokenType.CloseParen) {
-				token = engine.ReadToken (cancellationToken);
+				token = await engine.ReadToken (cancellationToken);
 
 				if (token.Type != ImapTokenType.OpenParen)
 					throw ImapEngine.UnexpectedToken (token, false);
@@ -742,29 +738,29 @@ namespace MailKit.Net.Imap {
 				if (ContentType.TryParse (builder.ToString (), out contentType))
 					body.ContentType = contentType;
 
-				token = engine.PeekToken (cancellationToken);
+				token = await engine.PeekToken (cancellationToken);
 			}
 
 			if (token.Type != ImapTokenType.CloseParen) {
-				body.ContentDisposition = ParseContentDisposition (engine, cancellationToken);
-				token = engine.PeekToken (cancellationToken);
+				body.ContentDisposition = await ParseContentDisposition (engine, cancellationToken);
+				token = await engine.PeekToken (cancellationToken);
 			}
 
 			if (token.Type != ImapTokenType.CloseParen) {
-				body.ContentLanguage = ParseContentLanguage (engine, cancellationToken);
-				token = engine.PeekToken (cancellationToken);
+				body.ContentLanguage = await ParseContentLanguage (engine, cancellationToken);
+				token = await engine.PeekToken (cancellationToken);
 			}
 
 			if (token.Type != ImapTokenType.CloseParen) {
-				body.ContentLocation = ParseContentLocation (engine, cancellationToken);
-				token = engine.PeekToken (cancellationToken);
+				body.ContentLocation = await ParseContentLocation (engine, cancellationToken);
+				token = await engine.PeekToken (cancellationToken);
 			}
 
 			if (token.Type != ImapTokenType.CloseParen)
-				SkipBodyExtensions (engine, cancellationToken);
+				await SkipBodyExtensions (engine, cancellationToken);
 
 			// read the ')'
-			token = engine.ReadToken (cancellationToken);
+			token = await engine.ReadToken (cancellationToken);
 
 			if (token.Type != ImapTokenType.CloseParen)
 				throw ImapEngine.UnexpectedToken (token, false);
@@ -772,9 +768,9 @@ namespace MailKit.Net.Imap {
 			return body;
 		}
 
-		public static BodyPart ParseBody (ImapEngine engine, string path, CancellationToken cancellationToken)
+		public static async Task<BodyPart> ParseBody (ImapEngine engine, string path, CancellationToken cancellationToken)
 		{
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 
 			if (token.Type == ImapTokenType.Nil)
 				return null;
@@ -782,25 +778,25 @@ namespace MailKit.Net.Imap {
 			if (token.Type != ImapTokenType.OpenParen)
 				throw ImapEngine.UnexpectedToken (token, false);
 
-			token = engine.PeekToken (cancellationToken);
+			token = await engine.PeekToken (cancellationToken);
 
 			if (token.Type == ImapTokenType.OpenParen)
-				return ParseMultipart (engine, path, null, cancellationToken);
+				return await ParseMultipart (engine, path, null, cancellationToken);
 
-			ContentType type;
-			string value;
+			var result = await ParseContentType (engine, cancellationToken);
 
-			if (!ParseContentType (engine, cancellationToken, out type, out value)) {
+			if (result is string) {
 				// GMail breakage... yay! What we have is a nested multipart with
 				// the same boundary as its parent.
-				return ParseMultipart (engine, path, value, cancellationToken);
+				return await ParseMultipart (engine, path, (string) result, cancellationToken);
 			}
 
-			var id = ReadNStringToken (engine, false, cancellationToken);
-			var desc = ReadNStringToken (engine, true, cancellationToken);
+			var type = (ContentType) result;
+			var id = await ReadNStringToken (engine, false, cancellationToken);
+			var desc = await ReadNStringToken (engine, true, cancellationToken);
 			// Note: technically, body-fld-enc, is not allowed to be NIL, but we need to deal with broken servers...
-			var enc = ReadNStringToken (engine, false, cancellationToken);
-			var octets = ReadNumber (engine, cancellationToken);
+			var enc = await ReadNStringToken (engine, false, cancellationToken);
+			var octets = await ReadNumber (engine, cancellationToken);
 			BodyPartBasic body;
 
 			if (type.Matches ("message", "rfc822")) {
@@ -819,18 +815,18 @@ namespace MailKit.Net.Imap {
 				// The workaround is to check for the expected '(' signifying an envelope token.
 				// If we do not get an '(', then we are likely looking at the Content-MD5 token
 				// which gets handled below.
-				token = engine.PeekToken (cancellationToken);
+				token = await engine.PeekToken (cancellationToken);
 
 				if (token.Type == ImapTokenType.OpenParen) {
-					mesg.Envelope = ParseEnvelope (engine, cancellationToken);
-					mesg.Body = ParseBody (engine, path, cancellationToken);
-					mesg.Lines = ReadNumber (engine, cancellationToken);
+					mesg.Envelope = await ParseEnvelope (engine, cancellationToken);
+					mesg.Body = await ParseBody (engine, path, cancellationToken);
+					mesg.Lines = await ReadNumber (engine, cancellationToken);
 				}
 
 				body = mesg;
 			} else if (type.Matches ("text", "*")) {
 				var text = new BodyPartText ();
-				text.Lines = ReadNumber (engine, cancellationToken);
+				text.Lines = await ReadNumber (engine, cancellationToken);
 				body = text;
 			} else {
 				body = new BodyPartBasic ();
@@ -844,33 +840,33 @@ namespace MailKit.Net.Imap {
 			body.Octets = octets;
 
 			// if we are parsing a BODYSTRUCTURE, we may get some more tokens before the ')'
-			token = engine.PeekToken (cancellationToken);
+			token = await engine.PeekToken (cancellationToken);
 
 			if (token.Type != ImapTokenType.CloseParen) {
-				body.ContentMd5 = ReadNStringToken (engine, false, cancellationToken);
-				token = engine.PeekToken (cancellationToken);
+				body.ContentMd5 = await ReadNStringToken (engine, false, cancellationToken);
+				token = await engine.PeekToken (cancellationToken);
 			}
 
 			if (token.Type != ImapTokenType.CloseParen) {
-				body.ContentDisposition = ParseContentDisposition (engine, cancellationToken);
-				token = engine.PeekToken (cancellationToken);
+				body.ContentDisposition = await ParseContentDisposition (engine, cancellationToken);
+				token = await engine.PeekToken (cancellationToken);
 			}
 
 			if (token.Type != ImapTokenType.CloseParen) {
-				body.ContentLanguage = ParseContentLanguage (engine, cancellationToken);
-				token = engine.PeekToken (cancellationToken);
+				body.ContentLanguage = await ParseContentLanguage (engine, cancellationToken);
+				token = await engine.PeekToken (cancellationToken);
 			}
 
 			if (token.Type != ImapTokenType.CloseParen) {
-				body.ContentLocation = ParseContentLocation (engine, cancellationToken);
-				token = engine.PeekToken (cancellationToken);
+				body.ContentLocation = await ParseContentLocation (engine, cancellationToken);
+				token = await engine.PeekToken (cancellationToken);
 			}
 
 			if (token.Type != ImapTokenType.CloseParen)
-				SkipBodyExtensions (engine, cancellationToken);
+				await SkipBodyExtensions (engine, cancellationToken);
 
 			// read the ')'
-			token = engine.ReadToken (cancellationToken);
+			token = await engine.ReadToken (cancellationToken);
 
 			if (token.Type != ImapTokenType.CloseParen)
 				throw ImapEngine.UnexpectedToken (token, false);
@@ -878,18 +874,18 @@ namespace MailKit.Net.Imap {
 			return body;
 		}
 
-		static void AddEnvelopeAddress (InternetAddressList list, ImapEngine engine, CancellationToken cancellationToken)
+		static async Task AddEnvelopeAddress (InternetAddressList list, ImapEngine engine, CancellationToken cancellationToken)
 		{
 			var values = new string[4];
 			ImapToken token;
 			int index = 0;
 
 			do {
-				token = engine.ReadToken (cancellationToken);
+				token = await engine.ReadToken (cancellationToken);
 
 				switch (token.Type) {
 				case ImapTokenType.Literal:
-					values[index] = engine.ReadLiteral (cancellationToken);
+					values[index] = await engine.ReadLiteral (cancellationToken);
 					break;
 				case ImapTokenType.QString:
 				case ImapTokenType.Atom:
@@ -904,7 +900,7 @@ namespace MailKit.Net.Imap {
 				index++;
 			} while (index < 4);
 
-			token = engine.ReadToken (cancellationToken);
+			token = await engine.ReadToken (cancellationToken);
 
 			if (token.Type != ImapTokenType.CloseParen)
 				throw ImapEngine.UnexpectedToken (token, false);
@@ -926,9 +922,9 @@ namespace MailKit.Net.Imap {
 				list.Add (new MailboxAddress (name, address));
 		}
 
-		static void ParseEnvelopeAddressList (InternetAddressList list, ImapEngine engine, CancellationToken cancellationToken)
+		static async Task ParseEnvelopeAddressList (InternetAddressList list, ImapEngine engine, CancellationToken cancellationToken)
 		{
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 
 			if (token.Type == ImapTokenType.Nil)
 				return;
@@ -937,7 +933,7 @@ namespace MailKit.Net.Imap {
 				throw ImapEngine.UnexpectedToken (token, false);
 
 			do {
-				token = engine.ReadToken (cancellationToken);
+				token = await engine.ReadToken (cancellationToken);
 
 				if (token.Type == ImapTokenType.CloseParen)
 					break;
@@ -945,19 +941,19 @@ namespace MailKit.Net.Imap {
 				if (token.Type != ImapTokenType.OpenParen)
 					throw ImapEngine.UnexpectedToken (token, false);
 
-				AddEnvelopeAddress (list, engine, cancellationToken);
+				await AddEnvelopeAddress (list, engine, cancellationToken);
 			} while (true);
 		}
 
-		static DateTimeOffset? ParseEnvelopeDate (ImapEngine engine, CancellationToken cancellationToken)
+		static async Task<DateTimeOffset?> ParseEnvelopeDate (ImapEngine engine, CancellationToken cancellationToken)
 		{
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 			DateTimeOffset date;
 			string value;
 
 			switch (token.Type) {
 			case ImapTokenType.Literal:
-				value = engine.ReadLiteral (cancellationToken);
+				value = await engine.ReadLiteral (cancellationToken);
 				break;
 			case ImapTokenType.QString:
 			case ImapTokenType.Atom:
@@ -981,31 +977,31 @@ namespace MailKit.Net.Imap {
 		/// <returns>The envelope.</returns>
 		/// <param name="engine">The IMAP engine.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
-		public static Envelope ParseEnvelope (ImapEngine engine, CancellationToken cancellationToken)
+		public static async Task<Envelope> ParseEnvelope (ImapEngine engine, CancellationToken cancellationToken)
 		{
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 			string nstring;
 
 			if (token.Type != ImapTokenType.OpenParen)
 				throw ImapEngine.UnexpectedToken (token, false);
 
 			var envelope = new Envelope ();
-			envelope.Date = ParseEnvelopeDate (engine, cancellationToken);
-			envelope.Subject = ReadNStringToken (engine, true, cancellationToken);
-			ParseEnvelopeAddressList (envelope.From, engine, cancellationToken);
-			ParseEnvelopeAddressList (envelope.Sender, engine, cancellationToken);
-			ParseEnvelopeAddressList (envelope.ReplyTo, engine, cancellationToken);
-			ParseEnvelopeAddressList (envelope.To, engine, cancellationToken);
-			ParseEnvelopeAddressList (envelope.Cc, engine, cancellationToken);
-			ParseEnvelopeAddressList (envelope.Bcc, engine, cancellationToken);
+			envelope.Date = await ParseEnvelopeDate (engine, cancellationToken);
+			envelope.Subject = await ReadNStringToken (engine, true, cancellationToken);
+			await ParseEnvelopeAddressList (envelope.From, engine, cancellationToken);
+			await ParseEnvelopeAddressList (envelope.Sender, engine, cancellationToken);
+			await ParseEnvelopeAddressList (envelope.ReplyTo, engine, cancellationToken);
+			await ParseEnvelopeAddressList (envelope.To, engine, cancellationToken);
+			await ParseEnvelopeAddressList (envelope.Cc, engine, cancellationToken);
+			await ParseEnvelopeAddressList (envelope.Bcc, engine, cancellationToken);
 
-			if ((nstring = ReadNStringToken (engine, false, cancellationToken)) != null)
+			if ((nstring = await ReadNStringToken (engine, false, cancellationToken)) != null)
 				envelope.InReplyTo = MimeUtils.EnumerateReferences (nstring).FirstOrDefault ();
 
-			if ((nstring = ReadNStringToken (engine, false, cancellationToken)) != null)
+			if ((nstring = await ReadNStringToken (engine, false, cancellationToken)) != null)
 				envelope.MessageId = MimeUtils.EnumerateReferences (nstring).FirstOrDefault ();
 
-			token = engine.ReadToken (cancellationToken);
+			token = await engine.ReadToken (cancellationToken);
 
 			if (token.Type != ImapTokenType.CloseParen)
 				throw ImapEngine.UnexpectedToken (token, false);
@@ -1054,10 +1050,10 @@ namespace MailKit.Net.Imap {
 		/// <param name="engine">The IMAP engine.</param>
 		/// <param name="userFlags">A hash set of user-defined message flags that will be populated if non-null.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
-		public static MessageFlags ParseFlagsList (ImapEngine engine, HashSet<string> userFlags, CancellationToken cancellationToken)
+		public static async Task<MessageFlags> ParseFlagsList (ImapEngine engine, HashSet<string> userFlags, CancellationToken cancellationToken)
 		{
 			var specials = engine.IsGMail ? ImapStream.GMailLabelSpecials : ImapStream.AtomSpecials;
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 			var flags = MessageFlags.None;
 
 			if (token.Type != ImapTokenType.OpenParen) {
@@ -1065,7 +1061,7 @@ namespace MailKit.Net.Imap {
 				throw ImapEngine.UnexpectedToken (token, false);
 			}
 
-			token = engine.ReadToken (specials, cancellationToken);
+			token = await engine.ReadToken (specials, cancellationToken);
 
 			while (token.Type == ImapTokenType.Atom || token.Type == ImapTokenType.Flag) {
 				string flag = (string) token.Value;
@@ -1083,7 +1079,7 @@ namespace MailKit.Net.Imap {
 					break;
 				}
 
-				token = engine.ReadToken (specials, cancellationToken);
+				token = await engine.ReadToken (specials, cancellationToken);
 			}
 
 			if (token.Type != ImapTokenType.CloseParen) {
@@ -1100,23 +1096,23 @@ namespace MailKit.Net.Imap {
 		/// <returns>The message labels.</returns>
 		/// <param name="engine">The IMAP engine.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
-		public static ReadOnlyCollection<string> ParseLabelsList (ImapEngine engine, CancellationToken cancellationToken)
+		public static async Task<ReadOnlyCollection<string>> ParseLabelsList (ImapEngine engine, CancellationToken cancellationToken)
 		{
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 			var labels = new List<string> ();
 
 			if (token.Type != ImapTokenType.OpenParen)
 				throw ImapEngine.UnexpectedToken (token, false);
 
 			// Note: GMail's IMAP implementation is broken and does not quote strings with ']' like it should.
-			token = engine.ReadToken (ImapStream.GMailLabelSpecials, cancellationToken);
+			token = await engine.ReadToken (ImapStream.GMailLabelSpecials, cancellationToken);
 
 			while (token.Type == ImapTokenType.Flag || token.Type == ImapTokenType.Atom || token.Type == ImapTokenType.QString) {
 				var label = engine.DecodeMailboxName ((string) token.Value);
 
 				labels.Add (label);
 
-				token = engine.ReadToken (cancellationToken);
+				token = await engine.ReadToken (cancellationToken);
 			}
 
 			if (token.Type != ImapTokenType.CloseParen)
@@ -1125,9 +1121,9 @@ namespace MailKit.Net.Imap {
 			return new ReadOnlyCollection<string> (labels);
 		}
 
-		static MessageThread ParseThread (ImapEngine engine, uint uidValidity, CancellationToken cancellationToken)
+		static async Task<MessageThread> ParseThread (ImapEngine engine, uint uidValidity, CancellationToken cancellationToken)
 		{
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 			MessageThread thread, node, child;
 			uint uid;
 
@@ -1137,13 +1133,13 @@ namespace MailKit.Net.Imap {
 			node = thread = new MessageThread (new UniqueId (uidValidity, uid));
 
 			do {
-				token = engine.ReadToken (cancellationToken);
+				token = await engine.ReadToken (cancellationToken);
 
 				if (token.Type == ImapTokenType.CloseParen)
 					break;
 
 				if (token.Type == ImapTokenType.OpenParen) {
-					child = ParseThread (engine, uidValidity, cancellationToken);
+					child = await ParseThread (engine, uidValidity, cancellationToken);
 					node.Add (child);
 				} else {
 					if (token.Type != ImapTokenType.Atom || !uint.TryParse ((string) token.Value, out uid))
@@ -1165,23 +1161,23 @@ namespace MailKit.Net.Imap {
 		/// <param name="engine">The IMAP engine.</param>
 		/// <param name="uidValidity">The UIDVALIDITY of the folder.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
-		public static IList<MessageThread> ParseThreads (ImapEngine engine, uint uidValidity, CancellationToken cancellationToken)
+		public static async Task<IList<MessageThread>> ParseThreads (ImapEngine engine, uint uidValidity, CancellationToken cancellationToken)
 		{
 			var threads = new List<MessageThread> ();
 			ImapToken token;
 
 			do {
-				token = engine.PeekToken (cancellationToken);
+				token = await engine.PeekToken (cancellationToken);
 
 				if (token.Type == ImapTokenType.Eoln)
 					break;
 
-				token = engine.ReadToken (cancellationToken);
+				token = await engine.ReadToken (cancellationToken);
 
 				if (token.Type != ImapTokenType.OpenParen)
 					throw ImapEngine.UnexpectedToken (token, false);
 
-				threads.Add (ParseThread (engine, uidValidity, cancellationToken));
+				threads.Add (await ParseThread (engine, uidValidity, cancellationToken));
 			} while (true);
 
 			return threads;

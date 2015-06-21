@@ -3,8 +3,6 @@
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProductVersion>8.0.30703</ProductVersion>
-    <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>{7264D469-A390-4C10-9C87-DAA37EDD3C1D}</ProjectGuid>
     <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
     <OutputType>Library</OutputType>
@@ -59,7 +57,9 @@
     <Compile Include="Net\Imap\ImapEncoding.cs" />
     <Compile Include="Net\Imap\ImapEngine.cs" />
     <Compile Include="Net\Imap\ImapFolder.cs" />
+    <Compile Include="Net\Imap\ImapFolderAsync.cs" />
     <Compile Include="Net\Imap\ImapFolderConstructorArgs.cs" />
+    <Compile Include="Net\Imap\ImapFolderSync.cs" />
     <Compile Include="Net\Imap\ImapImplementation.cs" />
     <Compile Include="Net\Imap\ImapProtocolException.cs" />
     <Compile Include="Net\Imap\ImapResponseCode.cs" />

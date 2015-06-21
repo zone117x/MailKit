@@ -31,6 +31,7 @@ using System.Text;
 using System.Threading;
 using System.Diagnostics;
 using System.Globalization;
+using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 
@@ -45,8 +46,17 @@ namespace MailKit.Net.Imap {
 	/// <remarks>
 	/// An IMAP folder.
 	/// </remarks>
-	public class ImapFolder : MailFolder
+	public partial class ImapFolder : IMailFolder
 	{
+		/// <summary>
+		/// The bit mask of settable flags.
+		/// </summary>
+		/// <remarks>
+		/// Only flags in the list of settable flags may be set on a message by the client.
+		/// </remarks>
+		protected static readonly MessageFlags SettableFlags = MessageFlags.Answered | MessageFlags.Deleted |
+			MessageFlags.Draft | MessageFlags.Flagged | MessageFlags.Seen;
+
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.Net.Imap.ImapFolder"/> class.
 		/// </summary>
@@ -98,19 +108,6 @@ namespace MailKit.Net.Imap {
 		/// <value>The encoded name.</value>
 		internal string EncodedName {
 			get; private set;
-		}
-
-		/// <summary>
-		/// Gets an object that can be used to synchronize access to the IMAP server.
-		/// </summary>
-		/// <remarks>
-		/// <para>Gets an object that can be used to synchronize access to the IMAP server.</para>
-		/// <para>When using the non-Async methods from multiple threads, it is important to lock the
-		/// <see cref="SyncRoot"/> object for thread safety when using the synchronous methods.</para>
-		/// </remarks>
-		/// <value>The lock object.</value>
-		public override object SyncRoot {
-			get { return Engine; }
 		}
 
 		void CheckState (bool open, bool rw)
@@ -202,7 +199,130 @@ namespace MailKit.Net.Imap {
 				throw new FolderNotFoundException (folder.FullName);
 		}
 
-		#region IMailFolder implementation
+		/// <summary>
+		/// Gets an object that can be used to synchronize access to the IMAP server.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets an object that can be used to synchronize access to the IMAP server.</para>
+		/// <para>When using the non-Async methods from multiple threads, it is important to lock the
+		/// <see cref="SyncRoot"/> object for thread safety when using the synchronous methods.</para>
+		/// </remarks>
+		/// <value>The lock object.</value>
+		public object SyncRoot {
+			get { return Engine; }
+		}
+
+		/// <summary>
+		/// Get the parent folder.
+		/// </summary>
+		/// <remarks>
+		/// Root-level folders do not have a parent folder.
+		/// </remarks>
+		/// <value>The parent folder.</value>
+		public IMailFolder ParentFolder {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get the folder attributes.
+		/// </summary>
+		/// <remarks>
+		/// Gets the folder attributes.
+		/// </remarks>
+		/// <value>The folder attributes.</value>
+		public FolderAttributes Attributes {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get the permanent flags.
+		/// </summary>
+		/// <remarks>
+		/// The permanent flags are the message flags that will persist between sessions.
+		/// </remarks>
+		/// <value>The permanent flags.</value>
+		public MessageFlags PermanentFlags {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get the accepted flags.
+		/// </summary>
+		/// <remarks>
+		/// The accepted flags are the message flags that will be accepted and persist
+		/// for the current session. For the set of flags that will persist between
+		/// sessions, see the <see cref="PermanentFlags"/> property.
+		/// </remarks>
+		/// <value>The accepted flags.</value>
+		public MessageFlags AcceptedFlags {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get the directory separator.
+		/// </summary>
+		/// <remarks>
+		/// Gets the directory separator.
+		/// </remarks>
+		/// <value>The directory separator.</value>
+		public char DirectorySeparator {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get the read/write access of the folder.
+		/// </summary>
+		/// <remarks>
+		/// Gets the read/write access of the folder.
+		/// </remarks>
+		/// <value>The read/write access.</value>
+		public FolderAccess Access {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get whether or not the folder is a namespace folder.
+		/// </summary>
+		/// <remarks>
+		/// Gets whether or not the folder is a namespace folder.
+		/// </remarks>
+		/// <value><c>true</c> if the folder is a namespace folder; otherwise, <c>false</c>.</value>
+		public bool IsNamespace {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get the full name of the folder.
+		/// </summary>
+		/// <remarks>
+		/// This is the equivalent of the full path of a file on a file system.
+		/// </remarks>
+		/// <value>The full name of the folder.</value>
+		public string FullName {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get the name of the folder.
+		/// </summary>
+		/// <remarks>
+		/// This is the equivalent of the file name of a file on the file system.
+		/// </remarks>
+		/// <value>The name of the folder.</value>
+		public string Name {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get a value indicating whether the folder is subscribed.
+		/// </summary>
+		/// <remarks>
+		/// Gets a value indicating whether the folder is subscribed.
+		/// </remarks>
+		/// <value><c>true</c> if the folder is subscribed; otherwise, <c>false</c>.</value>
+		public bool IsSubscribed {
+			get; protected set;
+		}
 
 		/// <summary>
 		/// Gets a value indicating whether the folder is currently open.
@@ -211,8 +331,117 @@ namespace MailKit.Net.Imap {
 		/// Gets a value indicating whether the folder is currently open.
 		/// </remarks>
 		/// <value><c>true</c> if the folder is currently open; otherwise, <c>false</c>.</value>
-		public override bool IsOpen {
+		public bool IsOpen {
 			get { return Engine.Selected == this; }
+		}
+
+		/// <summary>
+		/// Get a value indicating whether the folder exists.
+		/// </summary>
+		/// <remarks>
+		/// Gets a value indicating whether the folder exists.
+		/// </remarks>
+		/// <value><c>true</c> if the folder exists; otherwise, <c>false</c>.</value>
+		public bool Exists {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get whether or not the folder supports mod-sequences.
+		/// </summary>
+		/// <remarks>
+		/// <para>If mod-sequences are not supported by the folder, then all of the APIs that take a modseq
+		/// argument will throw <see cref="System.NotSupportedException"/> and should not be used.</para>
+		/// </remarks>
+		/// <value><c>true</c> if supports mod-sequences; otherwise, <c>false</c>.</value>
+		public bool SupportsModSeq {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get the highest mod-sequence value of all messages in the mailbox.
+		/// </summary>
+		/// <remarks>
+		/// Gets the highest mod-sequence value of all messages in the mailbox.
+		/// </remarks>
+		/// <value>The highest mod-sequence value.</value>
+		public ulong HighestModSeq {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get the UID validity.
+		/// </summary>
+		/// <remarks>
+		/// <para>UIDs are only valid so long as the UID validity value remains unchanged. If and when
+		/// the folder's <see cref="UidValidity"/> is changed, a client MUST discard its cache of UIDs
+		/// along with any summary information that it may have and re-query the folder.</para>
+		/// <para>This value will only be set after the folder has been opened.</para>
+		/// </remarks>
+		/// <value>The UID validity.</value>
+		public uint UidValidity {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get the UID that the folder will assign to the next message that is added.
+		/// </summary>
+		/// <remarks>
+		/// This value will only be set after the folder has been opened.
+		/// </remarks>
+		/// <value>The next UID.</value>
+		public UniqueId? UidNext {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get the index of the first unread message in the folder.
+		/// </summary>
+		/// <remarks>
+		/// This value will only be set after the folder has been opened.
+		/// </remarks>
+		/// <value>The index of the first unread message.</value>
+		public int FirstUnread {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get the number of unread messages in the folder.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets the number of unread messages in the folder.</para>
+		/// <para>Note: This value will only be set after calling <see cref="Status(StatusItems, System.Threading.CancellationToken)"/>
+		/// with <see cref="StatusItems.Unread"/>.</para>
+		/// </remarks>
+		/// <value>The number of unread messages.</value>
+		public int Unread {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get the number of recently added messages in the folder.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets the number of recently delivered messages in the folder.</para>
+		/// <para>Note: This value will only be set after calling <see cref="Status(StatusItems, System.Threading.CancellationToken)"/>
+		/// with <see cref="StatusItems.Recent"/> or by opening the folder.</para>
+		/// </remarks>
+		/// <value>The number of recently added messages.</value>
+		public int Recent {
+			get; protected set;
+		}
+
+		/// <summary>
+		/// Get the total number of messages in the folder.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets the total number of messages in the folder.</para>
+		/// <para>Note: This value will only be set after calling <see cref="Status(StatusItems, System.Threading.CancellationToken)"/>
+		/// with <see cref="StatusItems.Count"/> or by opening the folder.</para>
+		/// </remarks>
+		/// <value>The total number of messages.</value>
+		public int Count {
+			get; protected set;
 		}
 
 		static string SelectOrExamine (FolderAccess access)
@@ -275,7 +504,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override FolderAccess Open (FolderAccess access, UniqueId uidValidity, ulong highestModSeq, IList<UniqueId> uids, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<FolderAccess> OpenAsync (FolderAccess access, UniqueId uidValidity, ulong highestModSeq, IList<UniqueId> uids, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatUidSet (uids);
 
@@ -314,7 +543,7 @@ namespace MailKit.Net.Imap {
 
 			try {
 				Engine.QueueCommand (ic);
-				Engine.Wait (ic);
+				await Engine.Wait (ic);
 
 				ProcessResponseCodes (ic, this);
 
@@ -373,7 +602,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override FolderAccess Open (FolderAccess access, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<FolderAccess> OpenAsync (FolderAccess access, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (access != FolderAccess.ReadOnly && access != FolderAccess.ReadWrite)
 				throw new ArgumentOutOfRangeException ("access");
@@ -397,7 +626,7 @@ namespace MailKit.Net.Imap {
 
 			try {
 				Engine.QueueCommand (ic);
-				Engine.Wait (ic);
+				await Engine.Wait (ic);
 
 				ProcessResponseCodes (ic, this);
 
@@ -452,7 +681,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void Close (bool expunge = false, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task CloseAsync (bool expunge = false, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			CheckState (true, expunge);
 
@@ -466,7 +695,7 @@ namespace MailKit.Net.Imap {
 				return;
 			}
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -518,7 +747,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IMailFolder Create (string name, bool isMessageFolder, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IMailFolder> CreateAsync (string name, bool isMessageFolder, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (name == null)
 				throw new ArgumentNullException ("name");
@@ -542,7 +771,7 @@ namespace MailKit.Net.Imap {
 
 			var ic = Engine.QueueCommand (cancellationToken, null, "CREATE %S\r\n", createName);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -554,7 +783,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = list;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -615,7 +844,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void Rename (IMailFolder parent, string name, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task RenameAsync (IMailFolder parent, string name, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (parent == null)
 				throw new ArgumentNullException ("parent");
@@ -645,7 +874,7 @@ namespace MailKit.Net.Imap {
 			var ic = Engine.QueueCommand (cancellationToken, null, "RENAME %F %S\r\n", this, encodedName);
 			var oldFullName = FullName;
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, this);
 
@@ -702,7 +931,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void Delete (CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task DeleteAsync (CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (IsNamespace || (Attributes & FolderAttributes.Inbox) != 0)
 				throw new InvalidOperationException ("Cannot delete this folder.");
@@ -711,7 +940,7 @@ namespace MailKit.Net.Imap {
 
 			var ic = Engine.QueueCommand (cancellationToken, null, "DELETE %F\r\n", this);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, this);
 
@@ -757,13 +986,13 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void Subscribe (CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task SubscribeAsync (CancellationToken cancellationToken = default (CancellationToken))
 		{
 			CheckState (false, false);
 
 			var ic = Engine.QueueCommand (cancellationToken, null, "SUBSCRIBE %F\r\n", this);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -802,13 +1031,13 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void Unsubscribe (CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task UnsubscribeAsync (CancellationToken cancellationToken = default (CancellationToken))
 		{
 			CheckState (false, false);
 
 			var ic = Engine.QueueCommand (cancellationToken, null, "UNSUBSCRIBE %F\r\n", this);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -849,7 +1078,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IEnumerable<IMailFolder> GetSubfolders (bool subscribedOnly = false, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IEnumerable<IMailFolder>> GetSubfoldersAsync (bool subscribedOnly = false, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			CheckState (false, false);
 
@@ -863,7 +1092,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = list;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			// Note: Some broken IMAP servers (*cough* SmarterMail 13.0 *cough*) return folders
 			// that are not children of the folder we requested, so we need to filter those
@@ -929,7 +1158,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IMailFolder GetSubfolder (string name, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IMailFolder> GetSubfolderAsync (string name, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (name == null)
 				throw new ArgumentNullException ("name");
@@ -952,7 +1181,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = list;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -999,13 +1228,13 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void Check (CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task CheckAsync (CancellationToken cancellationToken = default (CancellationToken))
 		{
 			CheckState (true, false);
 
 			var ic = Engine.QueueCommand (cancellationToken, this, "CHECK\r\n");
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -1057,7 +1286,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void Status (StatusItems items, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task StatusAsync (StatusItems items, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if ((Engine.Capabilities & ImapCapabilities.Status) == 0)
 				throw new NotSupportedException ("The IMAP server does not support the STATUS command.");
@@ -1086,7 +1315,7 @@ namespace MailKit.Net.Imap {
 			var command = string.Format ("STATUS %F ({0})\r\n", flags);
 			var ic = Engine.QueueCommand (cancellationToken, null, command, this);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, this);
 
@@ -1094,22 +1323,22 @@ namespace MailKit.Net.Imap {
 				throw ImapCommandException.Create ("STATUS", ic);
 		}
 
-		static void UntaggedAcl (ImapEngine engine, ImapCommand ic, int index)
+		static async Task UntaggedAcl (ImapEngine engine, ImapCommand ic, int index)
 		{
 			var acl = (AccessControlList) ic.UserData;
 			string name, rights;
 			ImapToken token;
 
 			// read the mailbox name
-			ReadStringToken (engine, ic.CancellationToken);
+			await ReadStringToken (engine, ic.CancellationToken);
 
 			do {
-				name = ReadStringToken (engine, ic.CancellationToken);
-				rights = ReadStringToken (engine, ic.CancellationToken);
+				name = await ReadStringToken (engine, ic.CancellationToken);
+				rights = await ReadStringToken (engine, ic.CancellationToken);
 
 				acl.Add (new AccessControl (name, rights));
 
-				token = engine.PeekToken (ic.CancellationToken);
+				token = await engine.PeekToken (ic.CancellationToken);
 			} while (token.Type != ImapTokenType.Eoln);
 		}
 
@@ -1145,7 +1374,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The command failed.
 		/// </exception>
-		public override AccessControlList GetAccessControlList (CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<AccessControlList> GetAccessControlListAsync (CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if ((Engine.Capabilities & ImapCapabilities.Acl) == 0)
 				throw new NotSupportedException ("The IMAP server does not support the ACL extension.");
@@ -1157,7 +1386,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = new AccessControlList ();
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -1167,23 +1396,23 @@ namespace MailKit.Net.Imap {
 			return (AccessControlList) ic.UserData;
 		}
 
-		static void UntaggedListRights (ImapEngine engine, ImapCommand ic, int index)
+		static async Task UntaggedListRights (ImapEngine engine, ImapCommand ic, int index)
 		{
 			var access = (AccessRights) ic.UserData;
 			ImapToken token;
 
 			// read the mailbox name
-			ReadStringToken (engine, ic.CancellationToken);
+			await ReadStringToken (engine, ic.CancellationToken);
 
 			// read the identity name
-			ReadStringToken (engine, ic.CancellationToken);
+			await ReadStringToken (engine, ic.CancellationToken);
 
 			do {
-				var rights = ReadStringToken (engine, ic.CancellationToken);
+				var rights = await ReadStringToken (engine, ic.CancellationToken);
 
 				access.AddRange (rights);
 
-				token = engine.PeekToken (ic.CancellationToken);
+				token = await engine.PeekToken (ic.CancellationToken);
 			} while (token.Type != ImapTokenType.Eoln);
 		}
 
@@ -1223,7 +1452,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The command failed.
 		/// </exception>
-		public override AccessRights GetAccessRights (string name, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<AccessRights> GetAccessRightsAsync (string name, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (name == null)
 				throw new ArgumentNullException ("name");
@@ -1238,7 +1467,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = new AccessRights ();
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -1248,15 +1477,15 @@ namespace MailKit.Net.Imap {
 			return (AccessRights) ic.UserData;
 		}
 
-		static void UntaggedMyRights (ImapEngine engine, ImapCommand ic, int index)
+		static async Task UntaggedMyRights (ImapEngine engine, ImapCommand ic, int index)
 		{
 			var access = (AccessRights) ic.UserData;
 
 			// read the mailbox name
-			ReadStringToken (engine, ic.CancellationToken);
+			await ReadStringToken (engine, ic.CancellationToken);
 
 			// read the access rights
-			access.AddRange (ReadStringToken (engine, ic.CancellationToken));
+			access.AddRange (await ReadStringToken (engine, ic.CancellationToken));
 		}
 
 		/// <summary>
@@ -1291,7 +1520,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The command failed.
 		/// </exception>
-		public override AccessRights GetMyAccessRights (CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<AccessRights> GetMyAccessRightsAsync (CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if ((Engine.Capabilities & ImapCapabilities.Acl) == 0)
 				throw new NotSupportedException ("The IMAP server does not support the ACL extension.");
@@ -1303,7 +1532,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = new AccessRights ();
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -1313,7 +1542,7 @@ namespace MailKit.Net.Imap {
 			return (AccessRights) ic.UserData;
 		}
 
-		void ModifyAccessRights (string name, AccessRights rights, string action, CancellationToken cancellationToken)
+		async Task ModifyAccessRights (string name, AccessRights rights, string action, CancellationToken cancellationToken)
 		{
 			if ((Engine.Capabilities & ImapCapabilities.Acl) == 0)
 				throw new NotSupportedException ("The IMAP server does not support the ACL extension.");
@@ -1322,7 +1551,7 @@ namespace MailKit.Net.Imap {
 
 			var ic = Engine.QueueCommand (cancellationToken, null, "SETACL %F %S %S\r\n", this, name, action + rights);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -1371,7 +1600,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The command failed.
 		/// </exception>
-		public override void AddAccessRights (string name, AccessRights rights, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task AddAccessRightsAsync (string name, AccessRights rights, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (name == null)
 				throw new ArgumentNullException ("name");
@@ -1382,7 +1611,7 @@ namespace MailKit.Net.Imap {
 			if (rights.Count == 0)
 				throw new ArgumentException ("No rights were specified.", "rights");
 
-			ModifyAccessRights (name, rights, "+", cancellationToken);
+			await ModifyAccessRights (name, rights, "+", cancellationToken);
 		}
 
 		/// <summary>
@@ -1426,7 +1655,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The command failed.
 		/// </exception>
-		public override void RemoveAccessRights (string name, AccessRights rights, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task RemoveAccessRightsAsync (string name, AccessRights rights, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (name == null)
 				throw new ArgumentNullException ("name");
@@ -1437,7 +1666,7 @@ namespace MailKit.Net.Imap {
 			if (rights.Count == 0)
 				throw new ArgumentException ("No rights were specified.", "rights");
 
-			ModifyAccessRights (name, rights, "-", cancellationToken);
+			await ModifyAccessRights (name, rights, "-", cancellationToken);
 		}
 
 		/// <summary>
@@ -1478,7 +1707,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The command failed.
 		/// </exception>
-		public override void SetAccessRights (string name, AccessRights rights, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task SetAccessRightsAsync (string name, AccessRights rights, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (name == null)
 				throw new ArgumentNullException ("name");
@@ -1486,7 +1715,7 @@ namespace MailKit.Net.Imap {
 			if (rights == null)
 				throw new ArgumentNullException ("rights");
 
-			ModifyAccessRights (name, rights, string.Empty, cancellationToken);
+			await ModifyAccessRights (name, rights, string.Empty, cancellationToken);
 		}
 
 		/// <summary>
@@ -1524,7 +1753,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The command failed.
 		/// </exception>
-		public override void RemoveAccess (string name, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task RemoveAccessAsync (string name, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (name == null)
 				throw new ArgumentNullException ("name");
@@ -1536,7 +1765,7 @@ namespace MailKit.Net.Imap {
 
 			var ic = Engine.QueueCommand (cancellationToken, null, "DELETEACL %F %S\r\n", this, name);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -1544,12 +1773,12 @@ namespace MailKit.Net.Imap {
 				throw ImapCommandException.Create ("DELETEACL", ic);
 		}
 
-		static string ReadStringToken (ImapEngine engine, CancellationToken cancellationToken)
+		static async Task<string> ReadStringToken (ImapEngine engine, CancellationToken cancellationToken)
 		{
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 
 			switch (token.Type) {
-			case ImapTokenType.Literal: return engine.ReadLiteral (cancellationToken);
+			case ImapTokenType.Literal: return await engine.ReadLiteral (cancellationToken);
 			case ImapTokenType.QString: return (string) token.Value;
 			case ImapTokenType.Atom:    return (string) token.Value;
 			default:
@@ -1557,24 +1786,24 @@ namespace MailKit.Net.Imap {
 			}
 		}
 
-		static void UntaggedQuotaRoot (ImapEngine engine, ImapCommand ic, int index)
+		static async Task UntaggedQuotaRoot (ImapEngine engine, ImapCommand ic, int index)
 		{
 			// The first token should be the mailbox name
-			ReadStringToken (engine, ic.CancellationToken);
+			await ReadStringToken (engine, ic.CancellationToken);
 
 			// ...followed by 0 or more quota roots
-			var token = engine.PeekToken (ic.CancellationToken);
+			var token = await engine.PeekToken (ic.CancellationToken);
 
 			while (token.Type != ImapTokenType.Eoln) {
-				ReadStringToken (engine, ic.CancellationToken);
+				await ReadStringToken (engine, ic.CancellationToken);
 
-				token = engine.PeekToken (ic.CancellationToken);
+				token = await engine.PeekToken (ic.CancellationToken);
 			}
 		}
 
-		static void UntaggedQuota (ImapEngine engine, ImapCommand ic, int index)
+		static async Task UntaggedQuota (ImapEngine engine, ImapCommand ic, int index)
 		{
-			var encodedName = ReadStringToken (engine, ic.CancellationToken);
+			var encodedName = await ReadStringToken (engine, ic.CancellationToken);
 			ImapFolder quotaRoot;
 			FolderQuota quota;
 
@@ -1586,7 +1815,7 @@ namespace MailKit.Net.Imap {
 
 			ic.UserData = quota = new FolderQuota (quotaRoot);
 
-			var token = engine.ReadToken (ic.CancellationToken);
+			var token = await engine.ReadToken (ic.CancellationToken);
 
 			if (token.Type != ImapTokenType.OpenParen)
 				throw ImapEngine.UnexpectedToken (token, false);
@@ -1595,19 +1824,19 @@ namespace MailKit.Net.Imap {
 				uint used, limit;
 				string resource;
 
-				token = engine.ReadToken (ic.CancellationToken);
+				token = await engine.ReadToken (ic.CancellationToken);
 
 				if (token.Type != ImapTokenType.Atom)
 					throw ImapEngine.UnexpectedToken (token, false);
 
 				resource = (string) token.Value;
 
-				token = engine.ReadToken (ic.CancellationToken);
+				token = await engine.ReadToken (ic.CancellationToken);
 
 				if (token.Type != ImapTokenType.Atom || !uint.TryParse ((string) token.Value, out used))
 					throw ImapEngine.UnexpectedToken (token, false);
 
-				token = engine.ReadToken (ic.CancellationToken);
+				token = await engine.ReadToken (ic.CancellationToken);
 
 				if (token.Type != ImapTokenType.Atom || !uint.TryParse ((string) token.Value, out limit))
 					throw ImapEngine.UnexpectedToken (token, false);
@@ -1623,7 +1852,7 @@ namespace MailKit.Net.Imap {
 					break;
 				}
 
-				token = engine.ReadToken (ic.CancellationToken);
+				token = await engine.ReadToken (ic.CancellationToken);
 			}
 		}
 
@@ -1661,7 +1890,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override FolderQuota GetQuota (CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<FolderQuota> GetQuotaAsync (CancellationToken cancellationToken = default (CancellationToken))
 		{
 			CheckState (false, false);
 
@@ -1673,7 +1902,7 @@ namespace MailKit.Net.Imap {
 			ic.RegisterUntaggedHandler ("QUOTA", UntaggedQuota);
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -1722,7 +1951,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override FolderQuota SetQuota (uint? messageLimit, uint? storageLimit, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<FolderQuota> SetQuotaAsync (uint? messageLimit, uint? storageLimit, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			CheckState (false, false);
 
@@ -1740,7 +1969,7 @@ namespace MailKit.Net.Imap {
 			ic.RegisterUntaggedHandler ("QUOTA", UntaggedQuota);
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -1793,13 +2022,13 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void Expunge (CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task ExpungeAsync (CancellationToken cancellationToken = default (CancellationToken))
 		{
 			CheckState (true, true);
 
 			var ic = Engine.QueueCommand (cancellationToken, this, "EXPUNGE\r\n");
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -1865,7 +2094,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void Expunge (IList<UniqueId> uids, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task ExpungeAsync (IList<UniqueId> uids, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			CheckState (true, true);
 
@@ -1874,8 +2103,8 @@ namespace MailKit.Net.Imap {
 
 			if ((Engine.Capabilities & ImapCapabilities.UidPlus) == 0) {
 				// get the list of messages marked for deletion
-				var marked = Search (SearchQuery.Deleted, cancellationToken);
-				var unmark = new List<UniqueId> ();
+				var marked = await SearchAsync (SearchQuery.Deleted, cancellationToken);
+				var unmark = new UniqueIdSet (true);
 
 				// remove all uids except the ones that will be expunged
 				for (int i = 0; i < marked.Count; i++) {
@@ -1885,15 +2114,15 @@ namespace MailKit.Net.Imap {
 
 				if (unmark.Count > 0) {
 					// clear the \Deleted flag on all messages except the ones that are to be expunged
-					RemoveFlags (unmark, MessageFlags.Deleted, true, cancellationToken);
+					await RemoveFlagsAsync (unmark, MessageFlags.Deleted, true, cancellationToken);
 				}
 
 				// expunge the folder
-				Expunge (cancellationToken);
+				await ExpungeAsync (cancellationToken);
 
 				if (unmark.Count > 0) {
 					// restore the \Deleted flags
-					AddFlags (unmark, MessageFlags.Deleted, true, cancellationToken);
+					await AddFlagsAsync (unmark, MessageFlags.Deleted, true, cancellationToken);
 				}
 
 				return;
@@ -1903,7 +2132,7 @@ namespace MailKit.Net.Imap {
 			var command = string.Format ("UID EXPUNGE {0}\r\n", set);
 			var ic = Engine.QueueCommand (cancellationToken, this, command);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -1978,7 +2207,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override UniqueId? Append (FormatOptions options, MimeMessage message, MessageFlags flags = MessageFlags.None, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<UniqueId?> AppendAsync (FormatOptions options, MimeMessage message, MessageFlags flags = MessageFlags.None, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (options == null)
 				throw new ArgumentNullException ("options");
@@ -2002,7 +2231,7 @@ namespace MailKit.Net.Imap {
 
 			var ic = QueueAppend (format, message, flags, null, cancellationToken, progress);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, this);
 
@@ -2065,7 +2294,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override UniqueId? Append (FormatOptions options, MimeMessage message, MessageFlags flags, DateTimeOffset date, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<UniqueId?> AppendAsync (FormatOptions options, MimeMessage message, MessageFlags flags, DateTimeOffset date, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (options == null)
 				throw new ArgumentNullException ("options");
@@ -2089,7 +2318,7 @@ namespace MailKit.Net.Imap {
 
 			var ic = QueueAppend (format, message, flags, date, cancellationToken, progress);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, this);
 
@@ -2187,7 +2416,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<UniqueId> Append (FormatOptions options, IList<MimeMessage> messages, IList<MessageFlags> flags, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<IList<UniqueId>> AppendAsync (FormatOptions options, IList<MimeMessage> messages, IList<MessageFlags> flags, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (options == null)
 				throw new ArgumentNullException ("options");
@@ -2226,7 +2455,7 @@ namespace MailKit.Net.Imap {
 			if ((Engine.Capabilities & ImapCapabilities.MultiAppend) != 0) {
 				var ic = QueueMultiAppend (format, messages, flags, null, cancellationToken, progress);
 
-				Engine.Wait (ic);
+				await Engine.Wait (ic);
 
 				ProcessResponseCodes (ic, this);
 
@@ -2245,7 +2474,7 @@ namespace MailKit.Net.Imap {
 			var uids = new List<UniqueId> ();
 
 			for (int i = 0; i < messages.Count; i++) {
-				var uid = Append (format, messages[i], flags[i], cancellationToken);
+				var uid = await AppendAsync (format, messages[i], flags[i], cancellationToken);
 				if (uids != null && uid.HasValue)
 					uids.Add (uid.Value);
 				else
@@ -2315,7 +2544,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<UniqueId> Append (FormatOptions options, IList<MimeMessage> messages, IList<MessageFlags> flags, IList<DateTimeOffset> dates, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<IList<UniqueId>> AppendAsync (FormatOptions options, IList<MimeMessage> messages, IList<MessageFlags> flags, IList<DateTimeOffset> dates, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (options == null)
 				throw new ArgumentNullException ("options");
@@ -2357,7 +2586,7 @@ namespace MailKit.Net.Imap {
 			if ((Engine.Capabilities & ImapCapabilities.MultiAppend) != 0) {
 				var ic = QueueMultiAppend (format, messages, flags, dates, cancellationToken, progress);
 
-				Engine.Wait (ic);
+				await Engine.Wait (ic);
 
 				ProcessResponseCodes (ic, null);
 
@@ -2376,7 +2605,7 @@ namespace MailKit.Net.Imap {
 			var uids = new List<UniqueId> ();
 
 			for (int i = 0; i < messages.Count; i++) {
-				var uid = Append (format, messages[i], flags[i], dates[i], cancellationToken);
+				var uid = await AppendAsync (format, messages[i], flags[i], dates[i], cancellationToken);
 				if (uids != null && uid.HasValue)
 					uids.Add (uid.Value);
 				else
@@ -2441,7 +2670,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<UniqueId> CopyTo (IList<UniqueId> uids, IMailFolder destination, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<UniqueId>> CopyToAsync (IList<UniqueId> uids, IMailFolder destination, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatUidSet (uids);
 
@@ -2457,15 +2686,16 @@ namespace MailKit.Net.Imap {
 				return new UniqueId[0];
 
 			if ((Engine.Capabilities & ImapCapabilities.UidPlus) == 0) {
-				var indexes = Fetch (uids, MessageSummaryItems.UniqueId, cancellationToken).Select (x => x.Index).ToList ();
-				CopyTo (indexes, destination, cancellationToken);
+				var messages = await FetchAsync (uids, MessageSummaryItems.UniqueId, cancellationToken);
+				var indexes = messages.Select (x => x.Index).ToList ();
+				await CopyToAsync (indexes, destination, cancellationToken);
 				return new UniqueId[0];
 			}
 
 			var command = string.Format ("UID COPY {0} %F\r\n", set);
 			var ic = Engine.QueueCommand (cancellationToken, this, command, destination);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, destination);
 
@@ -2538,19 +2768,20 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<UniqueId> MoveTo (IList<UniqueId> uids, IMailFolder destination, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<UniqueId>> MoveToAsync (IList<UniqueId> uids, IMailFolder destination, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if ((Engine.Capabilities & ImapCapabilities.Move) == 0) {
-				var copied = CopyTo (uids, destination, cancellationToken);
-				AddFlags (uids, MessageFlags.Deleted, true, cancellationToken);
-				Expunge (uids, cancellationToken);
+				var copied = await CopyToAsync (uids, destination, cancellationToken);
+				await AddFlagsAsync (uids, MessageFlags.Deleted, true, cancellationToken);
+				await ExpungeAsync (uids, cancellationToken);
 				return copied;
 			}
 
 			if ((Engine.Capabilities & ImapCapabilities.UidPlus) == 0) {
-				var indexes = Fetch (uids, MessageSummaryItems.UniqueId, cancellationToken).Select (x => x.Index).ToList ();
-				MoveTo (indexes, destination, cancellationToken);
-				Expunge (uids, cancellationToken);
+				var messages = await FetchAsync (uids, MessageSummaryItems.UniqueId, cancellationToken);
+				var indexes = messages.Select (x => x.Index).ToList ();
+				await MoveToAsync (indexes, destination, cancellationToken);
+				await ExpungeAsync (uids, cancellationToken);
 				return new UniqueId[0];
 			}
 
@@ -2570,7 +2801,7 @@ namespace MailKit.Net.Imap {
 			var command = string.Format ("UID MOVE {0} %F\r\n", set);
 			var ic = Engine.QueueCommand (cancellationToken, this, command, destination);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, destination);
 
@@ -2636,7 +2867,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void CopyTo (IList<int> indexes, IMailFolder destination, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task CopyToAsync (IList<int> indexes, IMailFolder destination, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatIndexSet (indexes);
 
@@ -2654,7 +2885,7 @@ namespace MailKit.Net.Imap {
 			var command = string.Format ("COPY {0} %F\r\n", set);
 			var ic = Engine.QueueCommand (cancellationToken, this, command, destination);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, destination);
 
@@ -2714,11 +2945,11 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void MoveTo (IList<int> indexes, IMailFolder destination, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task MoveToAsync (IList<int> indexes, IMailFolder destination, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if ((Engine.Capabilities & ImapCapabilities.Move) == 0) {
-				CopyTo (indexes, destination, cancellationToken);
-				AddFlags (indexes, MessageFlags.Deleted, true, cancellationToken);
+				await CopyToAsync (indexes, destination, cancellationToken);
+				await AddFlagsAsync (indexes, MessageFlags.Deleted, true, cancellationToken);
 				return;
 			}
 
@@ -2738,7 +2969,7 @@ namespace MailKit.Net.Imap {
 			var command = string.Format ("MOVE {0} %F\r\n", set);
 			var ic = Engine.QueueCommand (cancellationToken, this, command, destination);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, destination);
 
@@ -2768,9 +2999,9 @@ namespace MailKit.Net.Imap {
 			}
 		}
 
-		void FetchSummaryItems (ImapEngine engine, ImapCommand ic, int index)
+		async Task FetchSummaryItems (ImapEngine engine, ImapCommand ic, int index)
 		{
-			var token = engine.ReadToken (ic.CancellationToken);
+			var token = await engine.ReadToken (ic.CancellationToken);
 
 			if (token.Type != ImapTokenType.OpenParen)
 				throw ImapEngine.UnexpectedToken (token, false);
@@ -2787,7 +3018,7 @@ namespace MailKit.Net.Imap {
 			}
 
 			do {
-				token = engine.ReadToken (ic.CancellationToken);
+				token = await engine.ReadToken (ic.CancellationToken);
 
 				if (token.Type == ImapTokenType.CloseParen || token.Type == ImapTokenType.Eoln)
 					break;
@@ -2801,7 +3032,7 @@ namespace MailKit.Net.Imap {
 
 				switch (atom) {
 				case "INTERNALDATE":
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					switch (token.Type) {
 					case ImapTokenType.QString:
@@ -2818,7 +3049,7 @@ namespace MailKit.Net.Imap {
 					summary.Fields |= MessageSummaryItems.InternalDate;
 					break;
 				case "RFC822.SIZE":
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type != ImapTokenType.Atom || !uint.TryParse ((string) token.Value, out value))
 						throw ImapEngine.UnexpectedToken (token, false);
@@ -2827,15 +3058,15 @@ namespace MailKit.Net.Imap {
 					summary.MessageSize = value;
 					break;
 				case "BODYSTRUCTURE":
-					summary.Body = ImapUtils.ParseBody (engine, string.Empty, ic.CancellationToken);
+					summary.Body = await ImapUtils.ParseBody (engine, string.Empty, ic.CancellationToken);
 					summary.Fields |= MessageSummaryItems.BodyStructure;
 					break;
 				case "BODY":
-					token = engine.PeekToken (ic.CancellationToken);
+					token = await engine.PeekToken (ic.CancellationToken);
 
 					if (token.Type == ImapTokenType.OpenBracket) {
 						// consume the '['
-						token = engine.ReadToken (ic.CancellationToken);
+						token = await engine.ReadToken (ic.CancellationToken);
 
 						if (token.Type != ImapTokenType.OpenBracket)
 							throw ImapEngine.UnexpectedToken (token, false);
@@ -2843,14 +3074,14 @@ namespace MailKit.Net.Imap {
 						// References were requested...
 
 						do {
-							token = engine.ReadToken (ic.CancellationToken);
+							token = await engine.ReadToken (ic.CancellationToken);
 
 							if (token.Type == ImapTokenType.CloseBracket)
 								break;
 
 							if (token.Type == ImapTokenType.OpenParen) {
 								do {
-									token = engine.ReadToken (ic.CancellationToken);
+									token = await engine.ReadToken (ic.CancellationToken);
 
 									if (token.Type == ImapTokenType.CloseParen)
 										break;
@@ -2858,7 +3089,7 @@ namespace MailKit.Net.Imap {
 									// the header field names will generally be atoms or qstrings but may also be literals
 									switch (token.Type) {
 									case ImapTokenType.Literal:
-										engine.ReadLiteral (ic.CancellationToken);
+										await engine.ReadLiteral (ic.CancellationToken);
 										break;
 									case ImapTokenType.QString:
 									case ImapTokenType.Atom:
@@ -2875,7 +3106,7 @@ namespace MailKit.Net.Imap {
 						if (token.Type != ImapTokenType.CloseBracket)
 							throw ImapEngine.UnexpectedToken (token, false);
 
-						token = engine.ReadToken (ic.CancellationToken);
+						token = await engine.ReadToken (ic.CancellationToken);
 
 						if (token.Type != ImapTokenType.Literal)
 							throw ImapEngine.UnexpectedToken (token, false);
@@ -2893,7 +3124,7 @@ namespace MailKit.Net.Imap {
 						summary.Fields |= MessageSummaryItems.Body;
 
 						try {
-							summary.Body = ImapUtils.ParseBody (engine, string.Empty, ic.CancellationToken);
+							summary.Body = await ImapUtils.ParseBody (engine, string.Empty, ic.CancellationToken);
 						} catch (ImapProtocolException ex) {
 							if (!ex.UnexpectedToken)
 								throw;
@@ -2902,12 +3133,12 @@ namespace MailKit.Net.Imap {
 							// (see issue #32 for the `BODY ("ALTERNATIVE")` example), so to work around this nonsense,
 							// we need to drop the remainder of this line.
 							do {
-								token = engine.PeekToken (ic.CancellationToken);
+								token = await engine.PeekToken (ic.CancellationToken);
 
 								if (token.Type == ImapTokenType.Eoln)
 									break;
 
-								token = engine.ReadToken (ic.CancellationToken);
+								token = await engine.ReadToken (ic.CancellationToken);
 
 								if (token.Type == ImapTokenType.Literal)
 									ReadLiteralData (engine, ic.CancellationToken);
@@ -2918,25 +3149,25 @@ namespace MailKit.Net.Imap {
 					}
 					break;
 				case "ENVELOPE":
-					summary.Envelope = ImapUtils.ParseEnvelope (engine, ic.CancellationToken);
+					summary.Envelope = await ImapUtils.ParseEnvelope (engine, ic.CancellationToken);
 					summary.Fields |= MessageSummaryItems.Envelope;
 					break;
 				case "FLAGS":
-					summary.Flags = ImapUtils.ParseFlagsList (engine, summary.UserFlags, ic.CancellationToken);
+					summary.Flags = await ImapUtils.ParseFlagsList (engine, summary.UserFlags, ic.CancellationToken);
 					summary.Fields |= MessageSummaryItems.Flags;
 					break;
 				case "MODSEQ":
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type != ImapTokenType.OpenParen)
 						throw ImapEngine.UnexpectedToken (token, false);
 
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type != ImapTokenType.Atom || !ulong.TryParse ((string) token.Value, out value64) || value64 == 0)
 						throw ImapEngine.UnexpectedToken (token, false);
 
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type != ImapTokenType.CloseParen)
 						throw ImapEngine.UnexpectedToken (token, false);
@@ -2945,7 +3176,7 @@ namespace MailKit.Net.Imap {
 					summary.ModSeq = value64;
 					break;
 				case "UID":
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type != ImapTokenType.Atom || !uint.TryParse ((string) token.Value, out value) || value == 0)
 						throw ImapEngine.UnexpectedToken (token, false);
@@ -2954,7 +3185,7 @@ namespace MailKit.Net.Imap {
 					summary.Fields |= MessageSummaryItems.UniqueId;
 					break;
 				case "X-GM-MSGID":
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type != ImapTokenType.Atom || !ulong.TryParse ((string) token.Value, out value64) || value64 == 0)
 						throw ImapEngine.UnexpectedToken (token, false);
@@ -2963,7 +3194,7 @@ namespace MailKit.Net.Imap {
 					summary.GMailMessageId = value64;
 					break;
 				case "X-GM-THRID":
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type != ImapTokenType.Atom || !ulong.TryParse ((string) token.Value, out value64) || value64 == 0)
 						throw ImapEngine.UnexpectedToken (token, false);
@@ -2972,7 +3203,7 @@ namespace MailKit.Net.Imap {
 					summary.GMailThreadId = value64;
 					break;
 				case "X-GM-LABELS":
-					summary.GMailLabels = ImapUtils.ParseLabelsList (engine, ic.CancellationToken);
+					summary.GMailLabels = await ImapUtils.ParseLabelsList (engine, ic.CancellationToken);
 					summary.Fields |= MessageSummaryItems.GMailLabels;
 					break;
 				default:
@@ -3145,7 +3376,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<UniqueId> uids, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatUidSet (uids);
 
@@ -3166,7 +3397,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = ctx;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -3227,9 +3458,9 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<UniqueId> uids, MessageSummaryItems items, HashSet<HeaderId> fields, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, MessageSummaryItems items, HashSet<HeaderId> fields, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return Fetch (uids, items, GetHeaderNames (fields), cancellationToken);
+			return await FetchAsync (uids, items, GetHeaderNames (fields), cancellationToken);
 		}
 
 		/// <summary>
@@ -3283,7 +3514,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<UniqueId> uids, MessageSummaryItems items, HashSet<string> fields, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, MessageSummaryItems items, HashSet<string> fields, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatUidSet (uids);
 
@@ -3307,7 +3538,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = ctx;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -3376,7 +3607,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<UniqueId> uids, ulong modseq, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, ulong modseq, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatUidSet (uids);
 
@@ -3401,7 +3632,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = ctx;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -3472,9 +3703,9 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<UniqueId> uids, ulong modseq, MessageSummaryItems items, HashSet<HeaderId> fields, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, ulong modseq, MessageSummaryItems items, HashSet<HeaderId> fields, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return Fetch (uids, modseq, items, GetHeaderNames (fields), cancellationToken);
+			return await FetchAsync (uids, modseq, items, GetHeaderNames (fields), cancellationToken);
 		}
 
 		/// <summary>
@@ -3538,7 +3769,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<UniqueId> uids, ulong modseq, MessageSummaryItems items, HashSet<string> fields, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, ulong modseq, MessageSummaryItems items, HashSet<string> fields, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatUidSet (uids);
 
@@ -3566,7 +3797,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = ctx;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -3625,7 +3856,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<int> indexes, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatIndexSet (indexes);
 
@@ -3646,7 +3877,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = ctx;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -3707,9 +3938,9 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<int> indexes, MessageSummaryItems items, HashSet<HeaderId> fields, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, MessageSummaryItems items, HashSet<HeaderId> fields, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return Fetch (indexes, items, GetHeaderNames (fields), cancellationToken);
+			return await FetchAsync (indexes, items, GetHeaderNames (fields), cancellationToken);
 		}
 
 		/// <summary>
@@ -3763,7 +3994,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<int> indexes, MessageSummaryItems items, HashSet<string> fields, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, MessageSummaryItems items, HashSet<string> fields, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatIndexSet (indexes);
 
@@ -3787,7 +4018,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = ctx;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -3852,7 +4083,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<int> indexes, ulong modseq, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, ulong modseq, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatIndexSet (indexes);
 
@@ -3876,7 +4107,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = ctx;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -3943,9 +4174,9 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<int> indexes, ulong modseq, MessageSummaryItems items, HashSet<HeaderId> fields, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, ulong modseq, MessageSummaryItems items, HashSet<HeaderId> fields, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return Fetch (indexes, modseq, items, GetHeaderNames (fields), cancellationToken);
+			return await FetchAsync (indexes, modseq, items, GetHeaderNames (fields), cancellationToken);
 		}
 
 		/// <summary>
@@ -4005,7 +4236,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<int> indexes, ulong modseq, MessageSummaryItems items, HashSet<string> fields, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, ulong modseq, MessageSummaryItems items, HashSet<string> fields, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatIndexSet (indexes);
 
@@ -4032,7 +4263,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = ctx;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -4101,7 +4332,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (int min, int max, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (int min, int max, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (min < 0 || min > Count)
 				throw new ArgumentOutOfRangeException ("min");
@@ -4126,7 +4357,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = ctx;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -4190,9 +4421,9 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (int min, int max, MessageSummaryItems items, HashSet<HeaderId> fields, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (int min, int max, MessageSummaryItems items, HashSet<HeaderId> fields, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return Fetch (min, max, items, GetHeaderNames (fields), cancellationToken);
+			return await FetchAsync (min, max, items, GetHeaderNames (fields), cancellationToken);
 		}
 
 		/// <summary>
@@ -4249,7 +4480,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (int min, int max, MessageSummaryItems items, HashSet<string> fields, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (int min, int max, MessageSummaryItems items, HashSet<string> fields, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (min < 0 || min > Count)
 				throw new ArgumentOutOfRangeException ("min");
@@ -4277,7 +4508,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = ctx;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -4342,7 +4573,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (int min, int max, ulong modseq, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (int min, int max, ulong modseq, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (min < 0 || min >= Count)
 				throw new ArgumentOutOfRangeException ("min");
@@ -4367,7 +4598,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = ctx;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -4437,9 +4668,9 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (int min, int max, ulong modseq, MessageSummaryItems items, HashSet<HeaderId> fields, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (int min, int max, ulong modseq, MessageSummaryItems items, HashSet<HeaderId> fields, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return Fetch (min, max, modseq, items, GetHeaderNames (fields), cancellationToken);
+			return await FetchAsync (min, max, modseq, items, GetHeaderNames (fields), cancellationToken);
 		}
 
 		/// <summary>
@@ -4502,7 +4733,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (int min, int max, ulong modseq, MessageSummaryItems items, HashSet<string> fields, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<IMessageSummary>> FetchAsync (int min, int max, ulong modseq, MessageSummaryItems items, HashSet<string> fields, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (min < 0 || min >= Count)
 				throw new ArgumentOutOfRangeException ("min");
@@ -4530,7 +4761,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = ctx;
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -4647,9 +4878,9 @@ namespace MailKit.Net.Imap {
 			}
 		}
 
-		void FetchStream (ImapEngine engine, ImapCommand ic, int index)
+		async Task FetchStream (ImapEngine engine, ImapCommand ic, int index)
 		{
-			var token = engine.ReadToken (ic.CancellationToken);
+			var token = await engine.ReadToken (ic.CancellationToken);
 			var labels = new MessageLabelsChangedEventArgs (index);
 			var flags = new MessageFlagsChangedEventArgs (index);
 			var ctx = (FetchStreamContext) ic.UserData;
@@ -4666,7 +4897,7 @@ namespace MailKit.Net.Imap {
 				throw ImapEngine.UnexpectedToken (token, false);
 
 			do {
-				token = engine.ReadToken (ic.CancellationToken);
+				token = await engine.ReadToken (ic.CancellationToken);
 
 				if (token.Type == ImapTokenType.CloseParen || token.Type == ImapTokenType.Eoln)
 					break;
@@ -4681,7 +4912,7 @@ namespace MailKit.Net.Imap {
 
 				switch (atom) {
 				case "BODY":
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type != ImapTokenType.OpenBracket)
 						throw ImapEngine.UnexpectedToken (token, false);
@@ -4689,7 +4920,7 @@ namespace MailKit.Net.Imap {
 					section.Clear ();
 
 					do {
-						token = engine.ReadToken (ic.CancellationToken);
+						token = await engine.ReadToken (ic.CancellationToken);
 
 						if (token.Type == ImapTokenType.CloseBracket)
 							break;
@@ -4698,7 +4929,7 @@ namespace MailKit.Net.Imap {
 							section.Append (" (");
 
 							do {
-								token = engine.ReadToken (ic.CancellationToken);
+								token = await engine.ReadToken (ic.CancellationToken);
 
 								if (token.Type == ImapTokenType.CloseParen)
 									break;
@@ -4706,7 +4937,7 @@ namespace MailKit.Net.Imap {
 								// the header field names will generally be atoms or qstrings but may also be literals
 								switch (token.Type) {
 								case ImapTokenType.Literal:
-									section.Append (engine.ReadLiteral (ic.CancellationToken));
+									section.Append (await engine.ReadLiteral (ic.CancellationToken));
 									section.Append (' ');
 									break;
 								case ImapTokenType.QString:
@@ -4732,7 +4963,7 @@ namespace MailKit.Net.Imap {
 					if (token.Type != ImapTokenType.CloseBracket)
 						throw ImapEngine.UnexpectedToken (token, false);
 
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type == ImapTokenType.Atom) {
 						// this might be a region ("<###>")
@@ -4742,7 +4973,7 @@ namespace MailKit.Net.Imap {
 							var region = atom.Substring (1, atom.Length - 2);
 							int.TryParse (region, out offset);
 
-							token = engine.ReadToken (ic.CancellationToken);
+							token = await engine.ReadToken (ic.CancellationToken);
 						}
 					}
 
@@ -4796,7 +5027,7 @@ namespace MailKit.Net.Imap {
 
 					break;
 				case "UID":
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type != ImapTokenType.Atom || !uint.TryParse ((string) token.Value, out value) || value == 0)
 						throw ImapEngine.UnexpectedToken (token, false);
@@ -4810,17 +5041,17 @@ namespace MailKit.Net.Imap {
 					flags.UniqueId = uid.Value;
 					break;
 				case "MODSEQ":
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type != ImapTokenType.OpenParen)
 						throw ImapEngine.UnexpectedToken (token, false);
 
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type != ImapTokenType.Atom || !ulong.TryParse ((string) token.Value, out modseq) || modseq == 0)
 						throw ImapEngine.UnexpectedToken (token, false);
 
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type != ImapTokenType.CloseParen)
 						throw ImapEngine.UnexpectedToken (token, false);
@@ -4831,13 +5062,13 @@ namespace MailKit.Net.Imap {
 				case "FLAGS":
 					// even though we didn't request this piece of information, the IMAP server
 					// may send it if another client has recently modified the message flags.
-					flags.Flags = ImapUtils.ParseFlagsList (engine, flags.UserFlags, ic.CancellationToken);
+					flags.Flags = await ImapUtils.ParseFlagsList (engine, flags.UserFlags, ic.CancellationToken);
 					flagsChanged = true;
 					break;
 				case "X-GM-LABELS":
 					// even though we didn't request this piece of information, the IMAP server
 					// may send it if another client has recently modified the message labels.
-					labels.Labels = ImapUtils.ParseLabelsList (engine, ic.CancellationToken);
+					labels.Labels = await ImapUtils.ParseLabelsList (engine, ic.CancellationToken);
 					labelsChanged = true;
 					break;
 				default:
@@ -4892,7 +5123,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override MimeMessage GetMessage (UniqueId uid, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<MimeMessage> GetMessageAsync (UniqueId uid, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (uid.Id == 0)
 				throw new ArgumentException ("The uid is invalid.", "uid");
@@ -4909,7 +5140,7 @@ namespace MailKit.Net.Imap {
 			Engine.QueueCommand (ic);
 
 			try {
-				Engine.Wait (ic);
+				await Engine.Wait (ic);
 
 				ProcessResponseCodes (ic, null);
 
@@ -4964,7 +5195,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override MimeMessage GetMessage (int index, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<MimeMessage> GetMessageAsync (int index, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException ("index");
@@ -4981,7 +5212,7 @@ namespace MailKit.Net.Imap {
 			Engine.QueueCommand (ic);
 
 			try {
-				Engine.Wait (ic);
+				await Engine.Wait (ic);
 
 				ProcessResponseCodes (ic, null);
 
@@ -5071,9 +5302,9 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override MimeEntity GetBodyPart (UniqueId uid, BodyPart part, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<MimeEntity> GetBodyPartAsync (UniqueId uid, BodyPart part, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
-			return GetBodyPart (uid, part, false, cancellationToken, progress);
+			return await GetBodyPartAsync (uid, part, false, cancellationToken, progress);
 		}
 
 		/// <summary>
@@ -5118,7 +5349,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override MimeEntity GetBodyPart (UniqueId uid, BodyPart part, bool headersOnly, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<MimeEntity> GetBodyPartAsync (UniqueId uid, BodyPart part, bool headersOnly, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (uid.Id == 0)
 				throw new ArgumentException ("The uid is invalid.", "uid");
@@ -5126,7 +5357,7 @@ namespace MailKit.Net.Imap {
 			if (part == null)
 				throw new ArgumentNullException ("part");
 
-			return GetBodyPart (uid, part.PartSpecifier, headersOnly, cancellationToken, progress);
+			return await GetBodyPartAsync (uid, part.PartSpecifier, headersOnly, cancellationToken, progress);
 		}
 
 		/// <summary>
@@ -5170,9 +5401,9 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public MimeEntity GetBodyPart (UniqueId uid, string partSpecifier, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public async Task<MimeEntity> GetBodyPartAsync (UniqueId uid, string partSpecifier, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
-			return GetBodyPart (uid, partSpecifier, false, cancellationToken, progress);
+			return await GetBodyPartAsync (uid, partSpecifier, false, cancellationToken, progress);
 		}
 
 		/// <summary>
@@ -5217,7 +5448,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public MimeEntity GetBodyPart (UniqueId uid, string partSpecifier, bool headersOnly, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public async Task<MimeEntity> GetBodyPartAsync (UniqueId uid, string partSpecifier, bool headersOnly, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (uid.Id == 0)
 				throw new ArgumentException ("The uid is invalid.", "uid");
@@ -5241,7 +5472,7 @@ namespace MailKit.Net.Imap {
 			Engine.QueueCommand (ic);
 
 			try {
-				Engine.Wait (ic);
+				await Engine.Wait (ic);
 
 				ProcessResponseCodes (ic, null);
 
@@ -5318,9 +5549,9 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override MimeEntity GetBodyPart (int index, BodyPart part, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<MimeEntity> GetBodyPartAsync (int index, BodyPart part, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
-			return GetBodyPart (index, part, false, cancellationToken, progress);
+			return await GetBodyPartAsync (index, part, false, cancellationToken, progress);
 		}
 
 		/// <summary>
@@ -5365,7 +5596,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override MimeEntity GetBodyPart (int index, BodyPart part, bool headersOnly, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<MimeEntity> GetBodyPartAsync (int index, BodyPart part, bool headersOnly, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException ("index");
@@ -5373,7 +5604,7 @@ namespace MailKit.Net.Imap {
 			if (part == null)
 				throw new ArgumentNullException ("part");
 
-			return GetBodyPart (index, part.PartSpecifier, headersOnly, cancellationToken, progress);
+			return await GetBodyPartAsync (index, part.PartSpecifier, headersOnly, cancellationToken, progress);
 		}
 
 		/// <summary>
@@ -5417,9 +5648,9 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public MimeEntity GetBodyPart (int index, string partSpecifier, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public async Task<MimeEntity> GetBodyPartAsync (int index, string partSpecifier, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
-			return GetBodyPart (index, partSpecifier, false, cancellationToken, progress);
+			return await GetBodyPartAsync (index, partSpecifier, false, cancellationToken, progress);
 		}
 
 		/// <summary>
@@ -5464,7 +5695,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public MimeEntity GetBodyPart (int index, string partSpecifier, bool headersOnly, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public async Task<MimeEntity> GetBodyPartAsync (int index, string partSpecifier, bool headersOnly, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException ("index");
@@ -5488,7 +5719,7 @@ namespace MailKit.Net.Imap {
 			Engine.QueueCommand (ic);
 
 			try {
-				Engine.Wait (ic);
+				await Engine.Wait (ic);
 
 				ProcessResponseCodes (ic, null);
 
@@ -5571,7 +5802,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Stream GetStream (UniqueId uid, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<Stream> GetStreamAsync (UniqueId uid, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (uid.Id == 0)
 				throw new ArgumentException ("The uid is invalid.", "uid");
@@ -5597,7 +5828,7 @@ namespace MailKit.Net.Imap {
 			Engine.QueueCommand (ic);
 
 			try {
-				Engine.Wait (ic);
+				await Engine.Wait (ic);
 
 				ProcessResponseCodes (ic, null);
 
@@ -5661,7 +5892,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Stream GetStream (int index, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<Stream> GetStreamAsync (int index, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException ("index");
@@ -5687,7 +5918,7 @@ namespace MailKit.Net.Imap {
 			Engine.QueueCommand (ic);
 
 			try {
-				Engine.Wait (ic);
+				await Engine.Wait (ic);
 
 				ProcessResponseCodes (ic, null);
 
@@ -5748,7 +5979,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Stream GetStream (UniqueId uid, string section, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<Stream> GetStreamAsync (UniqueId uid, string section, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (uid.Id == 0)
 				throw new ArgumentException ("The uid is invalid.", "uid");
@@ -5769,7 +6000,7 @@ namespace MailKit.Net.Imap {
 			Engine.QueueCommand (ic);
 
 			try {
-				Engine.Wait (ic);
+				await Engine.Wait (ic);
 
 				ProcessResponseCodes (ic, null);
 
@@ -5840,7 +6071,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Stream GetStream (UniqueId uid, string section, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<Stream> GetStreamAsync (UniqueId uid, string section, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (uid.Id == 0)
 				throw new ArgumentException ("The uid is invalid.", "uid");
@@ -5870,7 +6101,7 @@ namespace MailKit.Net.Imap {
 			Engine.QueueCommand (ic);
 
 			try {
-				Engine.Wait (ic);
+				await Engine.Wait (ic);
 
 				ProcessResponseCodes (ic, null);
 
@@ -5931,7 +6162,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Stream GetStream (int index, string section, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<Stream> GetStreamAsync (int index, string section, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException ("index");
@@ -5952,7 +6183,7 @@ namespace MailKit.Net.Imap {
 			Engine.QueueCommand (ic);
 
 			try {
-				Engine.Wait (ic);
+				await Engine.Wait (ic);
 
 				ProcessResponseCodes (ic, null);
 
@@ -6022,7 +6253,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Stream GetStream (int index, string section, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<Stream> GetStreamAsync (int index, string section, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException ("index");
@@ -6052,7 +6283,7 @@ namespace MailKit.Net.Imap {
 			Engine.QueueCommand (ic);
 
 			try {
-				Engine.Wait (ic);
+				await Engine.Wait (ic);
 
 				ProcessResponseCodes (ic, null);
 
@@ -6070,7 +6301,7 @@ namespace MailKit.Net.Imap {
 			return stream;
 		}
 
-		IList<UniqueId> ModifyFlags (IList<UniqueId> uids, ulong? modseq, MessageFlags flags, HashSet<string> userFlags, string action, CancellationToken cancellationToken)
+		async Task<IList<UniqueId>> ModifyFlags (IList<UniqueId> uids, ulong? modseq, MessageFlags flags, HashSet<string> userFlags, string action, CancellationToken cancellationToken)
 		{
 			var flaglist = ImapUtils.FormatFlagsList (flags & PermanentFlags, userFlags != null ? userFlags.Count : 0);
 			var userFlagList = userFlags != null ? userFlags.ToArray () : new object[0];
@@ -6091,7 +6322,7 @@ namespace MailKit.Net.Imap {
 			var format = string.Format ("UID STORE {0}{1} {2} {3}\r\n", set, @params, action, flaglist);
 			var ic = Engine.QueueCommand (cancellationToken, this, format, userFlagList);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -6153,14 +6384,14 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void AddFlags (IList<UniqueId> uids, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task AddFlagsAsync (IList<UniqueId> uids, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			bool emptyUserFlags = userFlags == null || userFlags.Count == 0;
 
 			if ((flags & SettableFlags) == 0 && emptyUserFlags)
 				throw new ArgumentException ("No flags were specified.", "flags");
 
-			ModifyFlags (uids, null, flags, userFlags, silent ? "+FLAGS.SILENT" : "+FLAGS", cancellationToken);
+			await ModifyFlags (uids, null, flags, userFlags, silent ? "+FLAGS.SILENT" : "+FLAGS", cancellationToken);
 		}
 
 		/// <summary>
@@ -6208,12 +6439,12 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void RemoveFlags (IList<UniqueId> uids, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task RemoveFlagsAsync (IList<UniqueId> uids, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if ((flags & SettableFlags) == 0 && (userFlags == null || userFlags.Count == 0))
 				throw new ArgumentException ("No flags were specified.", "flags");
 
-			ModifyFlags (uids, null, flags, userFlags, silent ? "-FLAGS.SILENT" : "-FLAGS", cancellationToken);
+			await ModifyFlags (uids, null, flags, userFlags, silent ? "-FLAGS.SILENT" : "-FLAGS", cancellationToken);
 		}
 
 		/// <summary>
@@ -6259,9 +6490,9 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void SetFlags (IList<UniqueId> uids, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task SetFlagsAsync (IList<UniqueId> uids, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			ModifyFlags (uids, null, flags, userFlags, silent ? "FLAGS.SILENT" : "FLAGS", cancellationToken);
+			await ModifyFlags (uids, null, flags, userFlags, silent ? "FLAGS.SILENT" : "FLAGS", cancellationToken);
 		}
 
 		/// <summary>
@@ -6314,12 +6545,12 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<UniqueId> AddFlags (IList<UniqueId> uids, ulong modseq, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<UniqueId>> AddFlagsAsync (IList<UniqueId> uids, ulong modseq, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if ((flags & SettableFlags) == 0 && (userFlags == null || userFlags.Count == 0))
 				throw new ArgumentException ("No flags were specified.", "flags");
 
-			return ModifyFlags (uids, modseq, flags, userFlags, silent ? "+FLAGS.SILENT" : "+FLAGS", cancellationToken);
+			return await ModifyFlags (uids, modseq, flags, userFlags, silent ? "+FLAGS.SILENT" : "+FLAGS", cancellationToken);
 		}
 
 		/// <summary>
@@ -6372,12 +6603,12 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<UniqueId> RemoveFlags (IList<UniqueId> uids, ulong modseq, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<UniqueId>> RemoveFlagsAsync (IList<UniqueId> uids, ulong modseq, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if ((flags & SettableFlags) == 0 && (userFlags == null || userFlags.Count == 0))
 				throw new ArgumentException ("No flags were specified.", "flags");
 
-			return ModifyFlags (uids, modseq, flags, userFlags, silent ? "-FLAGS.SILENT" : "-FLAGS", cancellationToken);
+			return await ModifyFlags (uids, modseq, flags, userFlags, silent ? "-FLAGS.SILENT" : "-FLAGS", cancellationToken);
 		}
 
 		/// <summary>
@@ -6428,12 +6659,12 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<UniqueId> SetFlags (IList<UniqueId> uids, ulong modseq, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<UniqueId>> SetFlagsAsync (IList<UniqueId> uids, ulong modseq, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return ModifyFlags (uids, modseq, flags, userFlags, silent ? "FLAGS.SILENT" : "FLAGS", cancellationToken);
+			return await ModifyFlags (uids, modseq, flags, userFlags, silent ? "FLAGS.SILENT" : "FLAGS", cancellationToken);
 		}
 
-		IList<int> ModifyFlags (IList<int> indexes, ulong? modseq, MessageFlags flags, HashSet<string> userFlags, string action, CancellationToken cancellationToken)
+		async Task<IList<int>> ModifyFlags (IList<int> indexes, ulong? modseq, MessageFlags flags, HashSet<string> userFlags, string action, CancellationToken cancellationToken)
 		{
 			var flaglist = ImapUtils.FormatFlagsList (flags & PermanentFlags, userFlags != null ? userFlags.Count : 0);
 			var userFlagList = userFlags != null ? userFlags.ToArray () : new object[0];
@@ -6454,7 +6685,7 @@ namespace MailKit.Net.Imap {
 			var format = string.Format ("STORE {0}{1} {2} {3}\r\n", set, @params, action, flaglist);
 			var ic = Engine.QueueCommand (cancellationToken, this, format, userFlagList);
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -6521,12 +6752,12 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void AddFlags (IList<int> indexes, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task AddFlagsAsync (IList<int> indexes, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if ((flags & SettableFlags) == 0 && (userFlags == null || userFlags.Count == 0))
 				throw new ArgumentException ("No flags were specified.", "flags");
 
-			ModifyFlags (indexes, null, flags, userFlags, silent ? "+FLAGS.SILENT" : "+FLAGS", cancellationToken);
+			await ModifyFlags (indexes, null, flags, userFlags, silent ? "+FLAGS.SILENT" : "+FLAGS", cancellationToken);
 		}
 
 		/// <summary>
@@ -6574,12 +6805,12 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void RemoveFlags (IList<int> indexes, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task RemoveFlagsAsync (IList<int> indexes, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if ((flags & SettableFlags) == 0 && (userFlags == null || userFlags.Count == 0))
 				throw new ArgumentException ("No flags were specified.", "flags");
 
-			ModifyFlags (indexes, null, flags, userFlags, silent ? "-FLAGS.SILENT" : "-FLAGS", cancellationToken);
+			await ModifyFlags (indexes, null, flags, userFlags, silent ? "-FLAGS.SILENT" : "-FLAGS", cancellationToken);
 		}
 
 		/// <summary>
@@ -6625,9 +6856,9 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void SetFlags (IList<int> indexes, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task SetFlagsAsync (IList<int> indexes, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			ModifyFlags (indexes, null, flags, userFlags, silent ? "FLAGS.SILENT" : "FLAGS", cancellationToken);
+			await ModifyFlags (indexes, null, flags, userFlags, silent ? "FLAGS.SILENT" : "FLAGS", cancellationToken);
 		}
 
 		/// <summary>
@@ -6680,12 +6911,12 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<int> AddFlags (IList<int> indexes, ulong modseq, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<int>> AddFlagsAsync (IList<int> indexes, ulong modseq, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if ((flags & SettableFlags) == 0 && (userFlags == null || userFlags.Count == 0))
 				throw new ArgumentException ("No flags were specified.", "flags");
 
-			return ModifyFlags (indexes, modseq, flags, userFlags, silent ? "+FLAGS.SILENT" : "+FLAGS", cancellationToken);
+			return await ModifyFlags (indexes, modseq, flags, userFlags, silent ? "+FLAGS.SILENT" : "+FLAGS", cancellationToken);
 		}
 
 		/// <summary>
@@ -6738,12 +6969,12 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<int> RemoveFlags (IList<int> indexes, ulong modseq, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<int>> RemoveFlagsAsync (IList<int> indexes, ulong modseq, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if ((flags & SettableFlags) == 0 && (userFlags == null || userFlags.Count == 0))
 				throw new ArgumentException ("No flags were specified.", "flags");
 
-			return ModifyFlags (indexes, modseq, flags, userFlags, silent ? "-FLAGS.SILENT" : "-FLAGS", cancellationToken);
+			return await ModifyFlags (indexes, modseq, flags, userFlags, silent ? "-FLAGS.SILENT" : "-FLAGS", cancellationToken);
 		}
 
 		/// <summary>
@@ -6794,9 +7025,9 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<int> SetFlags (IList<int> indexes, ulong modseq, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<int>> SetFlagsAsync (IList<int> indexes, ulong modseq, MessageFlags flags, HashSet<string> userFlags, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return ModifyFlags (indexes, modseq, flags, userFlags, silent ? "FLAGS.SILENT" : "FLAGS", cancellationToken);
+			return await ModifyFlags (indexes, modseq, flags, userFlags, silent ? "FLAGS.SILENT" : "FLAGS", cancellationToken);
 		}
 
 		static string LabelListToString (IList<string> labels, ICollection<object> args)
@@ -6830,7 +7061,7 @@ namespace MailKit.Net.Imap {
 			return list.ToString ();
 		}
 
-		IList<UniqueId> ModifyLabels (IList<UniqueId> uids, ulong? modseq, IList<string> labels, string action, CancellationToken cancellationToken)
+		async Task<IList<UniqueId>> ModifyLabels (IList<UniqueId> uids, ulong? modseq, IList<string> labels, string action, CancellationToken cancellationToken)
 		{
 			var set = ImapUtils.FormatUidSet (uids);
 
@@ -6851,7 +7082,7 @@ namespace MailKit.Net.Imap {
 			var format = string.Format ("UID STORE {0}{1} {2} {3}\r\n", set, @params, action, list);
 			var ic = Engine.QueueCommand (cancellationToken, this, format, args.ToArray ());
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -6914,7 +7145,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void AddLabels (IList<UniqueId> uids, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task AddLabelsAsync (IList<UniqueId> uids, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (labels == null)
 				throw new ArgumentNullException ("labels");
@@ -6922,7 +7153,7 @@ namespace MailKit.Net.Imap {
 			if (labels.Count == 0)
 				throw new ArgumentException ("No labels were specified.", "labels");
 
-			ModifyLabels (uids, null, labels, silent ? "+X-GM-LABELS.SILENT" : "+X-GM-LABELS", cancellationToken);
+			await ModifyLabels (uids, null, labels, silent ? "+X-GM-LABELS.SILENT" : "+X-GM-LABELS", cancellationToken);
 		}
 
 		/// <summary>
@@ -6971,7 +7202,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void RemoveLabels (IList<UniqueId> uids, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task RemoveLabelsAsync (IList<UniqueId> uids, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (labels == null)
 				throw new ArgumentNullException ("labels");
@@ -6979,7 +7210,7 @@ namespace MailKit.Net.Imap {
 			if (labels.Count == 0)
 				throw new ArgumentException ("No labels were specified.", "labels");
 
-			ModifyLabels (uids, null, labels, silent ? "-X-GM-LABELS.SILENT" : "-X-GM-LABELS", cancellationToken);
+			await ModifyLabels (uids, null, labels, silent ? "-X-GM-LABELS.SILENT" : "-X-GM-LABELS", cancellationToken);
 		}
 
 		/// <summary>
@@ -7026,12 +7257,12 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void SetLabels (IList<UniqueId> uids, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task SetLabelsAsync (IList<UniqueId> uids, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (labels == null)
 				throw new ArgumentNullException ("labels");
 
-			ModifyLabels (uids, null, labels, silent ? "X-GM-LABELS.SILENT" : "X-GM-LABELS", cancellationToken);
+			await ModifyLabels (uids, null, labels, silent ? "X-GM-LABELS.SILENT" : "X-GM-LABELS", cancellationToken);
 		}
 
 		/// <summary>
@@ -7082,7 +7313,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<UniqueId> AddLabels (IList<UniqueId> uids, ulong modseq, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<UniqueId>> AddLabelsAsync (IList<UniqueId> uids, ulong modseq, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (labels == null)
 				throw new ArgumentNullException ("labels");
@@ -7090,7 +7321,7 @@ namespace MailKit.Net.Imap {
 			if (labels.Count == 0)
 				throw new ArgumentException ("No labels were specified.", "labels");
 
-			return ModifyLabels (uids, modseq, labels, silent ? "+X-GM-LABELS.SILENT" : "+X-GM-LABELS", cancellationToken);
+			return await ModifyLabels (uids, modseq, labels, silent ? "+X-GM-LABELS.SILENT" : "+X-GM-LABELS", cancellationToken);
 		}
 
 		/// <summary>
@@ -7141,7 +7372,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<UniqueId> RemoveLabels (IList<UniqueId> uids, ulong modseq, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<UniqueId>> RemoveLabelsAsync (IList<UniqueId> uids, ulong modseq, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (labels == null)
 				throw new ArgumentNullException ("labels");
@@ -7149,7 +7380,7 @@ namespace MailKit.Net.Imap {
 			if (labels.Count == 0)
 				throw new ArgumentException ("No labels were specified.", "labels");
 
-			return ModifyLabels (uids, modseq, labels, silent ? "-X-GM-LABELS.SILENT" : "-X-GM-LABELS", cancellationToken);
+			return await ModifyLabels (uids, modseq, labels, silent ? "-X-GM-LABELS.SILENT" : "-X-GM-LABELS", cancellationToken);
 		}
 
 		/// <summary>
@@ -7198,15 +7429,15 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<UniqueId> SetLabels (IList<UniqueId> uids, ulong modseq, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<UniqueId>> SetLabelsAsync (IList<UniqueId> uids, ulong modseq, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (labels == null)
 				throw new ArgumentNullException ("labels");
 
-			return ModifyLabels (uids, modseq, labels, silent ? "X-GM-LABELS.SILENT" : "X-GM-LABELS", cancellationToken);
+			return await ModifyLabels (uids, modseq, labels, silent ? "X-GM-LABELS.SILENT" : "X-GM-LABELS", cancellationToken);
 		}
 
-		IList<int> ModifyLabels (IList<int> indexes, ulong? modseq, IList<string> labels, string action, CancellationToken cancellationToken)
+		async Task<IList<int>> ModifyLabels (IList<int> indexes, ulong? modseq, IList<string> labels, string action, CancellationToken cancellationToken)
 		{
 			var set = ImapUtils.FormatIndexSet (indexes);
 
@@ -7227,7 +7458,7 @@ namespace MailKit.Net.Imap {
 			var format = string.Format ("STORE {0}{1} {2} {3}\r\n", set, @params, action, list);
 			var ic = Engine.QueueCommand (cancellationToken, this, format, args.ToArray ());
 
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -7295,7 +7526,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void AddLabels (IList<int> indexes, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task AddLabelsAsync (IList<int> indexes, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (labels == null)
 				throw new ArgumentNullException ("labels");
@@ -7303,7 +7534,7 @@ namespace MailKit.Net.Imap {
 			if (labels.Count == 0)
 				throw new ArgumentException ("No labels were specified.", "labels");
 
-			ModifyLabels (indexes, null, labels, silent ? "+X-GM-LABELS.SILENT" : "+X-GM-LABELS", cancellationToken);
+			await ModifyLabels (indexes, null, labels, silent ? "+X-GM-LABELS.SILENT" : "+X-GM-LABELS", cancellationToken);
 		}
 
 		/// <summary>
@@ -7352,7 +7583,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void RemoveLabels (IList<int> indexes, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task RemoveLabelsAsync (IList<int> indexes, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (labels == null)
 				throw new ArgumentNullException ("labels");
@@ -7360,7 +7591,7 @@ namespace MailKit.Net.Imap {
 			if (labels.Count == 0)
 				throw new ArgumentException ("No labels were specified.", "labels");
 
-			ModifyLabels (indexes, null, labels, silent ? "-X-GM-LABELS.SILENT" : "-X-GM-LABELS", cancellationToken);
+			await ModifyLabels (indexes, null, labels, silent ? "-X-GM-LABELS.SILENT" : "-X-GM-LABELS", cancellationToken);
 		}
 
 		/// <summary>
@@ -7407,12 +7638,12 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override void SetLabels (IList<int> indexes, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task SetLabelsAsync (IList<int> indexes, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (labels == null)
 				throw new ArgumentNullException ("labels");
 
-			ModifyLabels (indexes, null, labels, silent ? "X-GM-LABELS.SILENT" : "X-GM-LABELS", cancellationToken);
+			await ModifyLabels (indexes, null, labels, silent ? "X-GM-LABELS.SILENT" : "X-GM-LABELS", cancellationToken);
 		}
 
 		/// <summary>
@@ -7463,7 +7694,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<int> AddLabels (IList<int> indexes, ulong modseq, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public async Task<IList<int>> AddLabelsAsync (IList<int> indexes, ulong modseq, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (labels == null)
 				throw new ArgumentNullException ("labels");
@@ -7471,7 +7702,7 @@ namespace MailKit.Net.Imap {
 			if (labels.Count == 0)
 				throw new ArgumentException ("No labels were specified.", "labels");
 
-			return ModifyLabels (indexes, modseq, labels, silent ? "+X-GM-LABELS.SILENT" : "+X-GM-LABELS", cancellationToken);
+			return await ModifyLabels (indexes, modseq, labels, silent ? "+X-GM-LABELS.SILENT" : "+X-GM-LABELS", cancellationToken);
 		}
 
 		/// <summary>
@@ -7522,7 +7753,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<int> RemoveLabels (IList<int> indexes, ulong modseq, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public async Task<IList<int>> RemoveLabelsAsync (IList<int> indexes, ulong modseq, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (labels == null)
 				throw new ArgumentNullException ("labels");
@@ -7530,7 +7761,7 @@ namespace MailKit.Net.Imap {
 			if (labels.Count == 0)
 				throw new ArgumentException ("No labels were specified.", "labels");
 
-			return ModifyLabels (indexes, modseq, labels, silent ? "-X-GM-LABELS.SILENT" : "-X-GM-LABELS", cancellationToken);
+			return await ModifyLabels (indexes, modseq, labels, silent ? "-X-GM-LABELS.SILENT" : "-X-GM-LABELS", cancellationToken);
 		}
 
 		/// <summary>
@@ -7579,12 +7810,12 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<int> SetLabels (IList<int> indexes, ulong modseq, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
+		public async Task<IList<int>> SetLabelsAsync (IList<int> indexes, ulong modseq, IList<string> labels, bool silent, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			if (labels == null)
 				throw new ArgumentNullException ("labels");
 
-			return ModifyLabels (indexes, modseq, labels, silent ? "X-GM-LABELS.SILENT" : "X-GM-LABELS", cancellationToken);
+			return await ModifyLabels (indexes, modseq, labels, silent ? "X-GM-LABELS.SILENT" : "X-GM-LABELS", cancellationToken);
 		}
 
 		static bool IsAscii (string text)
@@ -7882,7 +8113,7 @@ namespace MailKit.Net.Imap {
 			return builder.ToString ();
 		}
 
-		static void SearchMatches (ImapEngine engine, ImapCommand ic, int index)
+		static async Task SearchMatches (ImapEngine engine, ImapCommand ic, int index)
 		{
 			var results = new SearchResults ();
 			var uids = new List<UniqueId> ();
@@ -7891,13 +8122,13 @@ namespace MailKit.Net.Imap {
 			uint uid;
 
 			do {
-				token = engine.PeekToken (ic.CancellationToken);
+				token = await engine.PeekToken (ic.CancellationToken);
 
 				// keep reading UIDs until we get to the end of the line or until we get a "(MODSEQ ####)"
 				if (token.Type == ImapTokenType.Eoln || token.Type == ImapTokenType.OpenParen)
 					break;
 
-				token = engine.ReadToken (ic.CancellationToken);
+				token = await engine.ReadToken (ic.CancellationToken);
 
 				if (token.Type != ImapTokenType.Atom || !uint.TryParse ((string) token.Value, out uid) || uid == 0)
 					throw ImapEngine.UnexpectedToken (token, false);
@@ -7906,10 +8137,10 @@ namespace MailKit.Net.Imap {
 			} while (true);
 
 			if (token.Type == ImapTokenType.OpenParen) {
-				engine.ReadToken (ic.CancellationToken);
+				await engine.ReadToken (ic.CancellationToken);
 
 				do {
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type == ImapTokenType.CloseParen)
 						break;
@@ -7921,7 +8152,7 @@ namespace MailKit.Net.Imap {
 
 					switch (atom) {
 					case "MODSEQ":
-						token = engine.ReadToken (ic.CancellationToken);
+						token = await engine.ReadToken (ic.CancellationToken);
 
 						if (token.Type != ImapTokenType.Atom || !ulong.TryParse ((string) token.Value, out modseq) || modseq == 0) {
 							Debug.WriteLine ("Expected 64-bit nz-number as the MODSEQ value, but got: {0}", token);
@@ -7930,7 +8161,7 @@ namespace MailKit.Net.Imap {
 						break;
 					}
 
-					token = engine.PeekToken (ic.CancellationToken);
+					token = await engine.PeekToken (ic.CancellationToken);
 				} while (token.Type != ImapTokenType.Eoln);
 			}
 
@@ -7938,9 +8169,9 @@ namespace MailKit.Net.Imap {
 			ic.UserData = results;
 		}
 
-		static void ESearchMatches (ImapEngine engine, ImapCommand ic, int index)
+		static async Task ESearchMatches (ImapEngine engine, ImapCommand ic, int index)
 		{
-			var token = engine.ReadToken (ic.CancellationToken);
+			var token = await engine.ReadToken (ic.CancellationToken);
 			var results = new SearchResults ();
 			UniqueIdSet uids = null;
 			//bool uid = false;
@@ -7953,7 +8184,7 @@ namespace MailKit.Net.Imap {
 			if (token.Type == ImapTokenType.OpenParen) {
 				// optional search correlator
 				do {
-					token = engine.ReadToken (ic.CancellationToken);
+					token = await engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type == ImapTokenType.CloseParen)
 						break;
@@ -7964,7 +8195,7 @@ namespace MailKit.Net.Imap {
 					atom = (string) token.Value;
 
 					if (atom == "TAG") {
-						token = engine.ReadToken (ic.CancellationToken);
+						token = await engine.ReadToken (ic.CancellationToken);
 
 						if (token.Type != ImapTokenType.Atom && token.Type != ImapTokenType.QString)
 							throw ImapEngine.UnexpectedToken (token, false);
@@ -7976,11 +8207,11 @@ namespace MailKit.Net.Imap {
 					}
 				} while (true);
 
-				token = engine.ReadToken (ic.CancellationToken);
+				token = await engine.ReadToken (ic.CancellationToken);
 			}
 
 			if (token.Type == ImapTokenType.Atom && ((string) token.Value) == "UID") {
-				token = engine.ReadToken (ic.CancellationToken);
+				token = await engine.ReadToken (ic.CancellationToken);
 				//uid = true;
 			}
 
@@ -7996,7 +8227,7 @@ namespace MailKit.Net.Imap {
 
 				atom = (string) token.Value;
 
-				token = engine.ReadToken (ic.CancellationToken);
+				token = await engine.ReadToken (ic.CancellationToken);
 
 				if (token.Type != ImapTokenType.Atom)
 					throw ImapEngine.UnexpectedToken (token, false);
@@ -8036,7 +8267,7 @@ namespace MailKit.Net.Imap {
 					throw ImapEngine.UnexpectedToken (token, false);
 				}
 
-				token = engine.ReadToken (ic.CancellationToken);
+				token = await engine.ReadToken (ic.CancellationToken);
 			} while (true);
 
 			results.UniqueIds = uids ?? new UniqueIdSet ();
@@ -8083,7 +8314,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<UniqueId> Search (SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<UniqueId>> SearchAsync (SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var args = new List<string> ();
 			string charset;
@@ -8115,7 +8346,7 @@ namespace MailKit.Net.Imap {
 			ic.RegisterUntaggedHandler ("SEARCH", SearchMatches);
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -8179,7 +8410,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<UniqueId> Search (SearchQuery query, IList<OrderBy> orderBy, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<UniqueId>> SearchAsync (SearchQuery query, IList<OrderBy> orderBy, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var args = new List<string> ();
 			string charset;
@@ -8222,7 +8453,7 @@ namespace MailKit.Net.Imap {
 				ic.RegisterUntaggedHandler ("SORT", SearchMatches);
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -8283,7 +8514,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<UniqueId> Search (IList<UniqueId> uids, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<UniqueId>> SearchAsync (IList<UniqueId> uids, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatUidSet (uids);
 			var args = new List<string> ();
@@ -8319,7 +8550,7 @@ namespace MailKit.Net.Imap {
 			ic.RegisterUntaggedHandler ("SEARCH", SearchMatches);
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -8388,7 +8619,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<UniqueId> Search (IList<UniqueId> uids, SearchQuery query, IList<OrderBy> orderBy, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<UniqueId>> SearchAsync (IList<UniqueId> uids, SearchQuery query, IList<OrderBy> orderBy, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatUidSet (uids);
 			var args = new List<string> ();
@@ -8435,7 +8666,7 @@ namespace MailKit.Net.Imap {
 				ic.RegisterUntaggedHandler ("SORT", SearchMatches);
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -8493,7 +8724,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override SearchResults Search (SearchOptions options, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<SearchResults> SearchAsync (SearchOptions options, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var args = new List<string> ();
 			string charset;
@@ -8529,7 +8760,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = new SearchResults ();
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -8589,7 +8820,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override SearchResults Search (SearchOptions options, SearchQuery query, IList<OrderBy> orderBy, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<SearchResults> SearchAsync (SearchOptions options, SearchQuery query, IList<OrderBy> orderBy, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var args = new List<string> ();
 			string charset;
@@ -8636,7 +8867,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = new SearchResults ();
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -8695,7 +8926,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override SearchResults Search (SearchOptions options, IList<UniqueId> uids, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<SearchResults> SearchAsync (SearchOptions options, IList<UniqueId> uids, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatUidSet (uids);
 			var args = new List<string> ();
@@ -8735,7 +8966,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = new SearchResults ();
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -8800,7 +9031,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override SearchResults Search (SearchOptions options, IList<UniqueId> uids, SearchQuery query, IList<OrderBy> orderBy, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<SearchResults> SearchAsync (SearchOptions options, IList<UniqueId> uids, SearchQuery query, IList<OrderBy> orderBy, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var set = ImapUtils.FormatUidSet (uids);
 			var args = new List<string> ();
@@ -8851,7 +9082,7 @@ namespace MailKit.Net.Imap {
 			ic.UserData = new SearchResults ();
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -8861,9 +9092,9 @@ namespace MailKit.Net.Imap {
 			return (SearchResults) ic.UserData;
 		}
 
-		static void ThreadMatches (ImapEngine engine, ImapCommand ic, int index)
+		static async Task ThreadMatches (ImapEngine engine, ImapCommand ic, int index)
 		{
-			ic.UserData = ImapUtils.ParseThreads (engine, ic.Folder.UidValidity, ic.CancellationToken);
+			ic.UserData = await ImapUtils.ParseThreads (engine, ic.Folder.UidValidity, ic.CancellationToken);
 		}
 
 		/// <summary>
@@ -8912,7 +9143,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<MessageThread> Thread (ThreadingAlgorithm algorithm, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<MessageThread>> ThreadAsync (ThreadingAlgorithm algorithm, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var method = algorithm.ToString ().ToUpperInvariant ();
 			var args = new List<string> ();
@@ -8939,7 +9170,7 @@ namespace MailKit.Net.Imap {
 			ic.RegisterUntaggedHandler ("THREAD", ThreadMatches);
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -9008,7 +9239,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<MessageThread> Thread (IList<UniqueId> uids, ThreadingAlgorithm algorithm, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual async Task<IList<MessageThread>> ThreadAsync (IList<UniqueId> uids, ThreadingAlgorithm algorithm, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var method = algorithm.ToString ().ToUpperInvariant ();
 			var set = ImapUtils.FormatUidSet (uids);
@@ -9036,7 +9267,7 @@ namespace MailKit.Net.Imap {
 			ic.RegisterUntaggedHandler ("THREAD", ThreadMatches);
 
 			Engine.QueueCommand (ic);
-			Engine.Wait (ic);
+			await Engine.Wait (ic);
 
 			ProcessResponseCodes (ic, null);
 
@@ -9051,7 +9282,332 @@ namespace MailKit.Net.Imap {
 			return threads;
 		}
 
-		#region Untagged response handlers called by ImapEngine
+		/// <summary>
+		/// Occurs when the folder is deleted.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="Deleted"/> event is emitted when the folder is deleted.
+		/// </remarks>
+		public event EventHandler<EventArgs> Deleted;
+
+		/// <summary>
+		/// Raise the deleted event.
+		/// </summary>
+		/// <remarks>
+		/// Raises the deleted event.
+		/// </remarks>
+		protected virtual void OnDeleted ()
+		{
+			var handler = Deleted;
+
+			if (handler != null)
+				handler (this, EventArgs.Empty);
+		}
+
+		/// <summary>
+		/// Occurs when the folder is renamed.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="Renamed"/> event is emitted when the folder is renamed.
+		/// </remarks>
+		public event EventHandler<FolderRenamedEventArgs> Renamed;
+
+		/// <summary>
+		/// Raise the renamed event.
+		/// </summary>
+		/// <remarks>
+		/// Raises the renamed event.
+		/// </remarks>
+		/// <param name="oldName">The old name of the folder.</param>
+		/// <param name="newName">The new name of the folder.</param>
+		protected virtual void OnRenamed (string oldName, string newName)
+		{
+			var handler = Renamed;
+
+			if (handler != null)
+				handler (this, new FolderRenamedEventArgs (oldName, newName));
+		}
+
+		/// <summary>
+		/// Occurs when the folder is subscribed.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="Subscribed"/> event is emitted when the folder is subscribed.
+		/// </remarks>
+		public event EventHandler<EventArgs> Subscribed;
+
+		/// <summary>
+		/// Raise the subscribed event.
+		/// </summary>
+		/// <remarks>
+		/// Raises the subscribed event.
+		/// </remarks>
+		protected virtual void OnSubscribed ()
+		{
+			var handler = Subscribed;
+
+			if (handler != null)
+				handler (this, EventArgs.Empty);
+		}
+
+		/// <summary>
+		/// Occurs when the folder is unsubscribed.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="Unsubscribed"/> event is emitted when the folder is unsubscribed.
+		/// </remarks>
+		public event EventHandler<EventArgs> Unsubscribed;
+
+		/// <summary>
+		/// Raise the unsubscribed event.
+		/// </summary>
+		/// <remarks>
+		/// Raises the unsubscribed event.
+		/// </remarks>
+		protected virtual void OnUnsubscribed ()
+		{
+			var handler = Unsubscribed;
+
+			if (handler != null)
+				handler (this, EventArgs.Empty);
+		}
+
+		/// <summary>
+		/// Occurs when a message is expunged from the folder.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="MessageExpunged"/> event is emitted when a message is expunged from the folder.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\ImapIdleExample.cs"/>
+		/// </example>
+		public event EventHandler<MessageEventArgs> MessageExpunged;
+
+		/// <summary>
+		/// Raise the message expunged event.
+		/// </summary>
+		/// <remarks>
+		/// Raises the message expunged event.
+		/// </remarks>
+		/// <param name="args">The message expunged event args.</param>
+		protected virtual void OnMessageExpunged (MessageEventArgs args)
+		{
+			var handler = MessageExpunged;
+
+			if (handler != null)
+				handler (this, args);
+		}
+
+		/// <summary>
+		/// Occurs when new messages arrive in the folder.
+		/// </summary>
+		/// <remarks>
+		/// Emitted when new messages arrive in the folder.
+		/// </remarks>
+		public event EventHandler<MessagesArrivedEventArgs> MessagesArrived;
+
+		/// <summary>
+		/// Raise the messages arrived event.
+		/// </summary>
+		/// <remarks>
+		/// Raises the messages arrived event.
+		/// </remarks>
+		/// <param name="args">The messages arrived event args.</param>
+		protected virtual void OnMessagesArrived (MessagesArrivedEventArgs args)
+		{
+			var handler = MessagesArrived;
+
+			if (handler != null)
+				handler (this, args);
+		}
+
+		/// <summary>
+		/// Occurs when a message vanishes from the folder.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="MessagesVanished"/> event is emitted when messages vanish from the folder.
+		/// </remarks>
+		public event EventHandler<MessagesVanishedEventArgs> MessagesVanished;
+
+		/// <summary>
+		/// Raise the messages vanished event.
+		/// </summary>
+		/// <remarks>
+		/// Raises the messages vanished event.
+		/// </remarks>
+		/// <param name="args">The messages vanished event args.</param>
+		protected virtual void OnMessagesVanished (MessagesVanishedEventArgs args)
+		{
+			var handler = MessagesVanished;
+
+			if (handler != null)
+				handler (this, args);
+		}
+
+		/// <summary>
+		/// Occurs when flags changed on a message.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="MessageFlagsChanged"/> event is emitted when the flags for a message are changed.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\ImapIdleExample.cs"/>
+		/// </example>
+		public event EventHandler<MessageFlagsChangedEventArgs> MessageFlagsChanged;
+
+		/// <summary>
+		/// Raise the message flags changed event.
+		/// </summary>
+		/// <remarks>
+		/// Raises the message flags changed event.
+		/// </remarks>
+		/// <param name="args">The message flags changed event args.</param>
+		protected virtual void OnMessageFlagsChanged (MessageFlagsChangedEventArgs args)
+		{
+			var handler = MessageFlagsChanged;
+
+			if (handler != null)
+				handler (this, args);
+		}
+
+		/// <summary>
+		/// Occurs when labels changed on a message.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="MessageLabelsChanged"/> event is emitted when the labels for a message are changed.
+		/// </remarks>
+		public event EventHandler<MessageLabelsChangedEventArgs> MessageLabelsChanged;
+
+		/// <summary>
+		/// Raise the message labels changed event.
+		/// </summary>
+		/// <remarks>
+		/// Raises the message labels changed event.
+		/// </remarks>
+		/// <param name="args">The message labels changed event args.</param>
+		protected virtual void OnMessageLabelsChanged (MessageLabelsChangedEventArgs args)
+		{
+			var handler = MessageLabelsChanged;
+
+			if (handler != null)
+				handler (this, args);
+		}
+
+		/// <summary>
+		/// Occurs when a message summary is fetched from the folder.
+		/// </summary>
+		/// <remarks>
+		/// Emitted when a message summary is fetched from the folder.
+		/// </remarks>
+		public event EventHandler<MessageSummaryFetchedEventArgs> MessageSummaryFetched;
+
+		/// <summary>
+		/// Raise the message summary fetched event.
+		/// </summary>
+		/// <remarks>
+		/// <para>Raises the message summary fetched event.</para>
+		/// <para>When multiple message summaries are being fetched from a remote folder,
+		/// it is possible that the connection will drop or some other exception will
+		/// occur, causing the Fetch method to fail, requiring the client to request the
+		/// same set of message summaries again after it reconnects. This is obviously
+		/// inefficient. To alleviate this potential problem, this event will be emitted
+		/// as soon as the <see cref="IMailFolder"/> successfully retrieves the complete
+		/// <see cref="IMessageSummary"/> for each requested message.</para>
+		/// <para>Note: The Fetch methods will return a list of all message summaries
+		/// that any information was retrieved for, regardless of whether or not all of
+		/// the requested items were fetched, therefore there may be a discrepency between
+		/// the number of times this event is emitetd and the number of summary items
+		/// returned from the Fetch method.</para>
+		/// </remarks>
+		/// <param name="message">The message summary.</param>
+		protected virtual void OnMessageSummaryFetched (IMessageSummary message)
+		{
+			var handler = MessageSummaryFetched;
+
+			if (handler != null)
+				handler (this, new MessageSummaryFetchedEventArgs (message));
+		}
+
+		/// <summary>
+		/// Occurs when the UID validity changes.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="UidValidityChanged"/> event is emitted whenever the <see cref="UidValidity"/> value changes.
+		/// </remarks>
+		public event EventHandler<EventArgs> UidValidityChanged;
+
+		/// <summary>
+		/// Raise the uid validity changed event.
+		/// </summary>
+		/// <remarks>
+		/// Raises the uid validity changed event.
+		/// </remarks>
+		protected virtual void OnUidValidityChanged ()
+		{
+			var handler = UidValidityChanged;
+
+			if (handler != null)
+				handler (this, EventArgs.Empty);
+		}
+
+		/// <summary>
+		/// Occurs when the message count changes.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="CountChanged"/> event is emitted whenever the <see cref="Count"/> value changes.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\ImapIdleExample.cs"/>
+		/// </example>
+		public event EventHandler<EventArgs> CountChanged;
+
+		/// <summary>
+		/// Raise the count changed event.
+		/// </summary>
+		/// <remarks>
+		/// Raises the count changed event.
+		/// </remarks>
+		protected virtual void OnCountChanged ()
+		{
+			var handler = CountChanged;
+
+			if (handler != null)
+				handler (this, EventArgs.Empty);
+		}
+
+		/// <summary>
+		/// Occurs when the recent message count changes.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="RecentChanged"/> event is emitted whenever the <see cref="Recent"/> value changes.
+		/// </remarks>
+		public event EventHandler<EventArgs> RecentChanged;
+
+		/// <summary>
+		/// Raise the recent changed event.
+		/// </summary>
+		/// <remarks>
+		/// Raises the recent changed event.
+		/// </remarks>
+		protected virtual void OnRecentChanged ()
+		{
+			var handler = RecentChanged;
+
+			if (handler != null)
+				handler (this, EventArgs.Empty);
+		}
+
+		/// <summary>
+		/// Returns a <see cref="System.String"/> that represents the current <see cref="MailKit.MailFolder"/>.
+		/// </summary>
+		/// <remarks>
+		/// Returns a <see cref="System.String"/> that represents the current <see cref="MailKit.MailFolder"/>.
+		/// </remarks>
+		/// <returns>A <see cref="System.String"/> that represents the current <see cref="MailKit.MailFolder"/>.</returns>
+		public override string ToString ()
+		{
+			return FullName;
+		}
 
 		internal void OnExists (int count)
 		{
@@ -9076,11 +9632,11 @@ namespace MailKit.Net.Imap {
 			OnCountChanged ();
 		}
 
-		internal void OnFetch (ImapEngine engine, int index, CancellationToken cancellationToken)
+		internal async Task OnFetch (ImapEngine engine, int index, CancellationToken cancellationToken)
 		{
 			var labels = new MessageLabelsChangedEventArgs (index);
 			var flags = new MessageFlagsChangedEventArgs (index);
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 			bool labelsChanged = false;
 			bool flagsChanged = false;
 
@@ -9088,7 +9644,7 @@ namespace MailKit.Net.Imap {
 				throw ImapEngine.UnexpectedToken (token, false);
 
 			do {
-				token = engine.ReadToken (cancellationToken);
+				token = await engine.ReadToken (cancellationToken);
 
 				if (token.Type == ImapTokenType.CloseParen || token.Type == ImapTokenType.Eoln)
 					break;
@@ -9102,17 +9658,17 @@ namespace MailKit.Net.Imap {
 
 				switch (atom) {
 				case "MODSEQ":
-					token = engine.ReadToken (cancellationToken);
+					token = await engine.ReadToken (cancellationToken);
 
 					if (token.Type != ImapTokenType.OpenParen)
 						throw ImapEngine.UnexpectedToken (token, false);
 
-					token = engine.ReadToken (cancellationToken);
+					token = await engine.ReadToken (cancellationToken);
 
 					if (token.Type != ImapTokenType.Atom || !ulong.TryParse ((string) token.Value, out modseq) || modseq == 0)
 						throw ImapEngine.UnexpectedToken (token, false);
 
-					token = engine.ReadToken (cancellationToken);
+					token = await engine.ReadToken (cancellationToken);
 
 					if (token.Type != ImapTokenType.CloseParen)
 						throw ImapEngine.UnexpectedToken (token, false);
@@ -9121,7 +9677,7 @@ namespace MailKit.Net.Imap {
 					flags.ModSeq = modseq;
 					break;
 				case "UID":
-					token = engine.ReadToken (cancellationToken);
+					token = await engine.ReadToken (cancellationToken);
 
 					if (token.Type != ImapTokenType.Atom || !uint.TryParse ((string) token.Value, out uid) || uid == 0)
 						throw ImapEngine.UnexpectedToken (token, false);
@@ -9130,11 +9686,11 @@ namespace MailKit.Net.Imap {
 					flags.UniqueId = new UniqueId (UidValidity, uid);
 					break;
 				case "FLAGS":
-					flags.Flags = ImapUtils.ParseFlagsList (engine, flags.UserFlags, cancellationToken);
+					flags.Flags = await ImapUtils.ParseFlagsList (engine, flags.UserFlags, cancellationToken);
 					flagsChanged = true;
 					break;
 				case "X-GM-LABELS":
-					labels.Labels = ImapUtils.ParseLabelsList (engine, cancellationToken);
+					labels.Labels = await ImapUtils.ParseLabelsList (engine, cancellationToken);
 					labelsChanged = true;
 					break;
 				default:
@@ -9162,15 +9718,15 @@ namespace MailKit.Net.Imap {
 			OnRecentChanged ();
 		}
 
-		internal void OnVanished (ImapEngine engine, CancellationToken cancellationToken)
+		internal async Task OnVanished (ImapEngine engine, CancellationToken cancellationToken)
 		{
-			var token = engine.ReadToken (cancellationToken);
+			var token = await engine.ReadToken (cancellationToken);
 			UniqueIdSet vanished;
 			bool earlier = false;
 
 			if (token.Type == ImapTokenType.OpenParen) {
 				do {
-					token = engine.ReadToken (cancellationToken);
+					token = await engine.ReadToken (cancellationToken);
 
 					if (token.Type == ImapTokenType.CloseParen)
 						break;
@@ -9184,7 +9740,7 @@ namespace MailKit.Net.Imap {
 						earlier = true;
 				} while (true);
 
-				token = engine.ReadToken (cancellationToken);
+				token = await engine.ReadToken (cancellationToken);
 			}
 
 			if (token.Type != ImapTokenType.Atom || !UniqueIdSet.TryParse ((string) token.Value, UidValidity, out vanished))
@@ -9233,12 +9789,6 @@ namespace MailKit.Net.Imap {
 			OnUidValidityChanged ();
 		}
 
-		#endregion
-
-		#endregion
-
-		#region IEnumerable<MimeMessage> implementation
-
 		/// <summary>
 		/// Gets an enumerator for the messages in the folder.
 		/// </summary>
@@ -9267,7 +9817,5 @@ namespace MailKit.Net.Imap {
 
 			yield break;
 		}
-
-		#endregion
 	}
 }
