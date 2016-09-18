@@ -1094,6 +1094,7 @@ namespace MailKit.Net.Imap {
 			case "ALERT":                return ImapResponseCodeType.Alert;
 			case "BADCHARSET":           return ImapResponseCodeType.BadCharset;
 			case "CAPABILITY":           return ImapResponseCodeType.Capability;
+			case "NEWNAME":              return ImapResponseCodeType.NewName;
 			case "PARSE":                return ImapResponseCodeType.Parse;
 			case "PERMANENTFLAGS":       return ImapResponseCodeType.PermanentFlags;
 			case "READ-ONLY":            return ImapResponseCodeType.ReadOnly;
@@ -1102,15 +1103,31 @@ namespace MailKit.Net.Imap {
 			case "UIDNEXT":              return ImapResponseCodeType.UidNext;
 			case "UIDVALIDITY":          return ImapResponseCodeType.UidValidity;
 			case "UNSEEN":               return ImapResponseCodeType.Unseen;
-			case "NEWNAME":              return ImapResponseCodeType.NewName;
+			case "REFERRAL":             return ImapResponseCodeType.Referral;
+			case "UNKNOWN-CTE":          return ImapResponseCodeType.UnknownCte;
 			case "APPENDUID":            return ImapResponseCodeType.AppendUid;
 			case "COPYUID":              return ImapResponseCodeType.CopyUid;
 			case "UIDNOTSTICKY":         return ImapResponseCodeType.UidNotSticky;
+			case "URLMECH":              return ImapResponseCodeType.UrlMech;
+			case "BADURL":               return ImapResponseCodeType.BadUrl;
+			case "TOOBIG":               return ImapResponseCodeType.TooBig;
 			case "HIGHESTMODSEQ":        return ImapResponseCodeType.HighestModSeq;
 			case "MODIFIED":             return ImapResponseCodeType.Modified;
 			case "NOMODSEQ":             return ImapResponseCodeType.NoModSeq;
 			case "COMPRESSIONACTIVE":    return ImapResponseCodeType.CompressionActive;
 			case "CLOSED":               return ImapResponseCodeType.Closed;
+			case "NOTSAVED":             return ImapResponseCodeType.NotSaved;
+			case "BADCOMPARATOR":        return ImapResponseCodeType.BadComparator;
+			case "ANNOTATE":             return ImapResponseCodeType.Annotate;
+			case "ANNOTATIONS":          return ImapResponseCodeType.Annotations;
+			case "MAXCONVERTMESSAGES":   return ImapResponseCodeType.MaxConvertMessages;
+			case "MAXCONVERTPARTS":      return ImapResponseCodeType.MaxConvertParts;
+			case "TEMPFAIL":             return ImapResponseCodeType.TempFail;
+			case "NOUPDATE":             return ImapResponseCodeType.NoUpdate;
+			case "METADATA":             return ImapResponseCodeType.Metadata;
+			case "NOTIFICATIONOVERFLOW": return ImapResponseCodeType.NotificationOverflow;
+			case "BADEVENT":             return ImapResponseCodeType.BadEvent;
+			case "UNDEFINED-FILTER":     return ImapResponseCodeType.UndefinedFilter;
 			case "UNAVAILABLE":          return ImapResponseCodeType.Unavailable;
 			case "AUTHENTICATIONFAILED": return ImapResponseCodeType.AuthenticationFailed;
 			case "AUTHORIZATIONFAILED":  return ImapResponseCodeType.AuthorizationFailed;
@@ -1319,6 +1336,8 @@ namespace MailKit.Net.Imap {
 				}
 
 				badurl.BadUrl = (string) token.Value;
+
+				token = Stream.ReadToken (cancellationToken);
 				break;
 			case ImapResponseCodeType.HighestModSeq:
 				var highest = (HighestModSeqResponseCode) code;
@@ -1362,6 +1381,61 @@ namespace MailKit.Net.Imap {
 				}
 
 				noUpdate.Tag = (string) token.Value;
+
+				token = Stream.ReadToken (cancellationToken);
+				break;
+			case ImapResponseCodeType.Metadata:
+				var metadata = (MetadataResponseCode) code;
+
+				if (token.Type != ImapTokenType.Atom) {
+					Debug.WriteLine ("Expected atom argument to 'METADATA' RESP-CODE, but got: {0}", token);
+					throw UnexpectedToken (GenericResponseCodeSyntaxErrorFormat, "METADATA", token);
+				}
+
+				switch ((string) token.Value) {
+				case "LONGENTRIES":
+					metadata.SubType = MetadataResponseCodeSubType.LongEntries;
+
+					token = Stream.ReadToken (cancellationToken);
+
+					if (token.Type != ImapTokenType.Atom || !uint.TryParse ((string) token.Value, out n32)) {
+						Debug.WriteLine ("Expected integer argument to 'METADATA LONGENTRIES' RESP-CODE, but got: {0}", token);
+						throw UnexpectedToken (GenericResponseCodeSyntaxErrorFormat, "METADATA LONGENTRIES", token);
+					}
+
+					metadata.Value = n32;
+					break;
+				case "MAXSIZE":
+					metadata.SubType = MetadataResponseCodeSubType.MaxSize;
+
+					token = Stream.ReadToken (cancellationToken);
+
+					if (token.Type != ImapTokenType.Atom || !uint.TryParse ((string) token.Value, out n32)) {
+						Debug.WriteLine ("Expected integer argument to 'METADATA MAXSIZE' RESP-CODE, but got: {0}", token);
+						throw UnexpectedToken (GenericResponseCodeSyntaxErrorFormat, "METADATA MAXSIZE", token);
+					}
+
+					metadata.Value = n32;
+					break;
+				case "TOOMANY":
+					metadata.SubType = MetadataResponseCodeSubType.TooMany;
+					break;
+				case "NOPRIVATE":
+					metadata.SubType = MetadataResponseCodeSubType.NoPrivate;
+					break;
+				}
+
+				token = Stream.ReadToken (cancellationToken);
+				break;
+			case ImapResponseCodeType.UndefinedFilter:
+				var undefined = (UndefinedFilterResponseCode) code;
+
+				if (token.Type != ImapTokenType.Atom) {
+					Debug.WriteLine ("Expected atom argument to 'UNDEFINED-FILTER' RESP-CODE, but got: {0}", token);
+					throw UnexpectedToken (GenericResponseCodeSyntaxErrorFormat, "UNDEFINED-FILTER", token);
+				}
+
+				undefined.Name = (string) token.Value;
 
 				token = Stream.ReadToken (cancellationToken);
 				break;

@@ -172,10 +172,10 @@ namespace MailKit.Net.Imap {
 			case ImapResponseCodeType.MaxConvertParts:      return new MaxConvertResponseCode (type);
 			case ImapResponseCodeType.TempFail:             return new ImapResponseCode (type, true);
 			case ImapResponseCodeType.NoUpdate:             return new NoUpdateResponseCode (type);
-			case ImapResponseCodeType.Metadata:             return new ImapResponseCode (type, false); // FIXME:
+			case ImapResponseCodeType.Metadata:             return new MetadataResponseCode (type);
 			case ImapResponseCodeType.NotificationOverflow: return new ImapResponseCode (type, true);
 			case ImapResponseCodeType.BadEvent:             return new ImapResponseCode (type, true);
-			case ImapResponseCodeType.UndefinedFilter:      return new ImapResponseCode (type, true);
+			case ImapResponseCodeType.UndefinedFilter:      return new UndefinedFilterResponseCode (type);
 			case ImapResponseCodeType.Unavailable:          return new ImapResponseCode (type, true);
 			case ImapResponseCodeType.AuthenticationFailed: return new ImapResponseCode (type, true);
 			case ImapResponseCodeType.AuthorizationFailed:  return new ImapResponseCode (type, true);
@@ -304,6 +304,34 @@ namespace MailKit.Net.Imap {
 		public string Tag;
 
 		internal NoUpdateResponseCode (ImapResponseCodeType type) : base (type, true)
+		{
+		}
+	}
+
+	enum MetadataResponseCodeSubType
+	{
+		LongEntries,
+		MaxSize,
+		TooMany,
+		NoPrivate
+	}
+
+	class MetadataResponseCode : ImapResponseCode
+	{
+		public MetadataResponseCodeSubType SubType;
+		public uint Value;
+
+		// FIXME: the LONGENTRIES code is not an error
+		internal MetadataResponseCode (ImapResponseCodeType type) : base (type, true)
+		{
+		}
+	}
+
+	class UndefinedFilterResponseCode : ImapResponseCode
+	{
+		public string Name;
+
+		internal UndefinedFilterResponseCode (ImapResponseCodeType type) : base (type, true)
 		{
 		}
 	}

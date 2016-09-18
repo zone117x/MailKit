@@ -31,6 +31,7 @@ using System.Text;
 using System.Threading;
 using System.Diagnostics;
 using System.Globalization;
+using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 
@@ -1932,33 +1933,6 @@ namespace MailKit.Net.Imap {
 			return (FolderQuota) ic.UserData;
 		}
 
-		static void UntaggedMetadata (ImapEngine engine, ImapCommand ic, int index)
-		{
-			string format = string.Format (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "METADATA", "{0}");
-			var encodedName = ReadStringToken (engine, format, ic.CancellationToken);
-			var metadata = (MetadataCollection) ic.UserData;
-			ImapFolder folder;
-
-			engine.GetCachedFolder (encodedName, out folder);
-
-			var token = engine.ReadToken (ic.CancellationToken);
-
-			if (token.Type != ImapTokenType.OpenParen)
-				throw ImapEngine.UnexpectedToken (format, token);
-
-			while (token.Type != ImapTokenType.CloseParen) {
-				var tag = ReadStringToken (engine, format, ic.CancellationToken);
-				var value = ReadStringToken (engine, format, ic.CancellationToken);
-
-				metadata.Add (new Metadata (MetadataTag.Create (tag), value));
-
-				token = engine.PeekToken (ic.CancellationToken);
-			}
-
-			// read the closing paren
-			engine.ReadToken (ic.CancellationToken);
-		}
-
 		/// <summary>
 		/// Gets the specified metadata.
 		/// </summary>
@@ -1999,8 +1973,8 @@ namespace MailKit.Net.Imap {
 			if ((Engine.Capabilities & ImapCapabilities.Metadata) == 0)
 				throw new NotSupportedException ("The IMAP server does not support the METADATA extension.");
 
-			var ic = new ImapCommand (Engine, cancellationToken, null, "GETMETADATA %F (%S)\r\n", this, tag.Id);
-			ic.RegisterUntaggedHandler ("METADATA", UntaggedMetadata);
+			var ic = new ImapCommand (Engine, cancellationToken, null, "GETMETADATA %F %S\r\n", this, tag.Id);
+			ic.RegisterUntaggedHandler ("METADATA", ImapUtils.ParseMetadata);
 			var metadata = new MetadataCollection ();
 			ic.UserData = metadata;
 
@@ -2027,10 +2001,13 @@ namespace MailKit.Net.Imap {
 		/// Gets the specified metadata.
 		/// </remarks>
 		/// <returns>The requested metadata.</returns>
+		/// <param name="options">The metadata options.</param>
 		/// <param name="tags">The metadata tags.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="tags"/> is <c>null</c>.
+		/// <para><paramref name="options"/> is <c>null</c>.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="tags"/> is <c>null</c>.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
@@ -2056,8 +2033,11 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override MetadataCollection GetMetadata (IEnumerable<MetadataTag> tags, CancellationToken cancellationToken = default (CancellationToken))
+		public override MetadataCollection GetMetadata (MetadataOptions options, IEnumerable<MetadataTag> tags, CancellationToken cancellationToken = default (CancellationToken))
 		{
+			if (options == null)
+				throw new ArgumentNullException (nameof (options));
+
 			if (tags == null)
 				throw new ArgumentNullException (nameof (tags));
 
@@ -2066,24 +2046,43 @@ namespace MailKit.Net.Imap {
 			if ((Engine.Capabilities & ImapCapabilities.Metadata) == 0)
 				throw new NotSupportedException ("The IMAP server does not support the METADATA extension.");
 
-			var command = new StringBuilder ("GETMETADATA %F (");
+			var command = new StringBuilder ("GETMETADATA %F");
 			var args = new List<object> ();
+			bool hasOptions = false;
+
+			if (options.MaxSize.HasValue || options.Depth != 0) {
+				command.Append (" (");
+				if (options.MaxSize.HasValue)
+					command.AppendFormat ("MAXSIZE {0} ", options.MaxSize.Value);
+				if (options.Depth > 0)
+					command.AppendFormat ("DEPTH {0} ", options.Depth == int.MaxValue ? "infinity" : "1");
+				command[command.Length - 1] = ')';
+				command.Append (' ');
+				hasOptions = true;
+			}
 
 			args.Add (this);
 
+			int startIndex = command.Length;
 			foreach (var tag in tags) {
-				if (args.Count > 1)
-					command.Append (' ');
-
-				command.Append ("%S");
+				command.Append (" %S");
 				args.Add (tag.Id);
 			}
 
-			command.Append (")\r\n");
+			if (hasOptions) {
+				command[startIndex] = '(';
+				command.Append (')');
+			}
+
+			command.Append ("\r\n");
+
+			if (args.Count == 1)
+				return new MetadataCollection ();
 
 			var ic = new ImapCommand (Engine, cancellationToken, null, command.ToString (), args.ToArray ());
-			ic.RegisterUntaggedHandler ("METADATA", UntaggedMetadata);
+			ic.RegisterUntaggedHandler ("METADATA", ImapUtils.ParseMetadata);
 			ic.UserData = new MetadataCollection ();
+			options.LongEntries = 0;
 
 			Engine.QueueCommand (ic);
 			Engine.Wait (ic);
@@ -2092,6 +2091,13 @@ namespace MailKit.Net.Imap {
 
 			if (ic.Response != ImapCommandResponse.Ok)
 				throw ImapCommandException.Create ("GETMETADATA", ic);
+
+			if (ic.RespCodes.Count > 0 && ic.RespCodes[ic.RespCodes.Count - 1].Type == ImapResponseCodeType.Metadata) {
+				var metadata = (MetadataResponseCode) ic.RespCodes[ic.RespCodes.Count - 1];
+
+				if (metadata.SubType == MetadataResponseCodeSubType.LongEntries)
+					options.LongEntries = metadata.Value;
+			}
 
 			return (MetadataCollection) ic.UserData;
 		}
@@ -2142,23 +2148,30 @@ namespace MailKit.Net.Imap {
 			if ((Engine.Capabilities & ImapCapabilities.Metadata) == 0)
 				throw new NotSupportedException ("The IMAP server does not support the METADATA extension.");
 
-			var command = new StringBuilder ("SETMETADATA %F (");
-			var args = new object[metadata.Count * 2 + 1];
-			int argc = 0;
+			if (metadata.Count == 0)
+				return;
 
-			args[argc++] = this;
+			var command = new StringBuilder ("SETMETADATA %F (");
+			var args = new List<object> ();
+
+			args.Add (this);
 
 			for (int i = 0; i < metadata.Count; i++) {
 				if (i > 0)
 					command.Append (' ');
 
-				command.Append ("%S %S");
-				args[argc++] = metadata[i].Tag.Id;
-				args[argc++] = metadata[i].Value;
+				if (metadata[i].Value != null) {
+					command.Append ("%S %S");
+					args.Add (metadata[i].Tag.Id);
+					args.Add (metadata[i].Value);
+				} else {
+					command.Append ("%S NIL");
+					args.Add (metadata[i].Tag.Id);
+				}
 			}
 			command.Append (")\r\n");
 
-			var ic = new ImapCommand (Engine, cancellationToken, null, command.ToString (), args);
+			var ic = new ImapCommand (Engine, cancellationToken, null, command.ToString (), args.ToArray ());
 
 			Engine.QueueCommand (ic);
 			Engine.Wait (ic);
@@ -8100,6 +8113,7 @@ namespace MailKit.Net.Imap {
 		{
 			TextSearchQuery text = null;
 			NumericSearchQuery numeric;
+			FilterSearchQuery filter;
 			HeaderSearchQuery header;
 			BinarySearchQuery binary;
 			UnarySearchQuery unary;
@@ -8156,6 +8170,14 @@ namespace MailKit.Net.Imap {
 				break;
 			case SearchTerm.Draft:
 				builder.Append ("DRAFT");
+				break;
+			case SearchTerm.Filter:
+				if ((Engine.Capabilities & ImapCapabilities.Filters) == 0)
+					throw new NotSupportedException ("The FILTER search term is not supported by the IMAP server.");
+
+				filter = (FilterSearchQuery) query;
+				builder.Append ("FILTER %S");
+				args.Add (filter.Name);
 				break;
 			case SearchTerm.Flagged:
 				builder.Append ("FLAGGED");
@@ -8364,7 +8386,7 @@ namespace MailKit.Net.Imap {
 		static void SearchMatches (ImapEngine engine, ImapCommand ic, int index)
 		{
 			var uids = new UniqueIdSet (SortOrder.Ascending);
-			var results = new SearchResults ();
+			var results = (SearchResults) ic.UserData;
 			ImapToken token;
 			ulong modseq;
 			uint uid;
@@ -8414,13 +8436,12 @@ namespace MailKit.Net.Imap {
 			}
 
 			results.UniqueIds = uids;
-			ic.UserData = results;
 		}
 
 		static void ESearchMatches (ImapEngine engine, ImapCommand ic, int index)
 		{
 			var token = engine.ReadToken (ic.CancellationToken);
-			var results = new SearchResults ();
+			var results = (SearchResults) ic.UserData;
 			UniqueIdSet uids = null;
 			int parenDepth = 0;
 			//bool uid = false;
@@ -8491,17 +8512,40 @@ namespace MailKit.Net.Imap {
 
 				token = engine.ReadToken (ic.CancellationToken);
 
-				if (token.Type != ImapTokenType.Atom)
-					throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
-
 				switch (atom) {
+				case "RELEVANCY":
+					if (token.Type != ImapTokenType.OpenParen)
+						throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+
+					results.Relevancy = new List<byte> ();
+
+					do {
+						int score;
+
+						token = engine.ReadToken (ic.CancellationToken);
+
+						if (token.Type == ImapTokenType.CloseParen)
+							break;
+
+						if (token.Type != ImapTokenType.Atom || !int.TryParse ((string) token.Value, out score) || score < 1 || score > 100)
+							throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+
+						results.Relevancy.Add ((byte) score);
+					} while (true);
+					break;
 				case "MODSEQ":
+					if (token.Type != ImapTokenType.Atom)
+						throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+
 					if (!ulong.TryParse ((string) token.Value, out modseq))
 						throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
 					results.ModSeq = modseq;
 					break;
 				case "COUNT":
+					if (token.Type != ImapTokenType.Atom)
+						throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+
 					if (!int.TryParse ((string) token.Value, out count))
 						throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
@@ -8514,12 +8558,18 @@ namespace MailKit.Net.Imap {
 					results.Min = new UniqueId (ic.Folder.UidValidity, min);
 					break;
 				case "MAX":
+					if (token.Type != ImapTokenType.Atom)
+						throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+
 					if (!uint.TryParse ((string) token.Value, out max))
 						throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
 					results.Max = new UniqueId (ic.Folder.UidValidity, max);
 					break;
 				case "ALL":
+					if (token.Type != ImapTokenType.Atom)
+						throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+
 					if (!UniqueIdSet.TryParse ((string) token.Value, ic.Folder.UidValidity, out uids))
 						throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
@@ -8533,7 +8583,129 @@ namespace MailKit.Net.Imap {
 			} while (true);
 
 			results.UniqueIds = uids ?? new UniqueIdSet ();
-			ic.UserData = results;
+		}
+
+		/// <summary>
+		/// Searches the folder for messages matching the specified query.
+		/// </summary>
+		/// <remarks>
+		/// Sends a <c>UID SEARCH</c> command with the specified query passed directly to the IMAP server
+		/// with no interpretation by MailKit. This means that the query may contain any arguments that a
+		/// <c>UID SEARCH</c> command is allowed to have according to the IMAP specifications and any
+		/// extensions that are supported, including <c>RETURN</c> parameters.
+		/// </remarks>
+		/// <returns>An array of matching UIDs.</returns>
+		/// <param name="query">The search query.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="query"/> is <c>null</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// <paramref name="query"/> is an empty string.
+		/// </exception>>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server's response contained unexpected tokens.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied with a NO or BAD response.
+		/// </exception>
+		public SearchResults Search (string query, CancellationToken cancellationToken = default (CancellationToken))
+		{
+			if (query == null)
+				throw new ArgumentNullException (nameof (query));
+
+			query = query.Trim ();
+
+			if (query.Length == 0)
+				throw new ArgumentException (nameof (query));
+
+			CheckState (true, false);
+
+			var command = "UID SEARCH " + query + "\r\n";
+			var ic = new ImapCommand (Engine, cancellationToken, this, command);
+			if ((Engine.Capabilities & ImapCapabilities.ESearch) != 0)
+				ic.RegisterUntaggedHandler ("ESEARCH", ESearchMatches);
+			ic.RegisterUntaggedHandler ("SEARCH", SearchMatches);
+			ic.UserData = new SearchResults ();
+
+			Engine.QueueCommand (ic);
+			Engine.Wait (ic);
+
+			ProcessResponseCodes (ic, null);
+
+			if (ic.Response != ImapCommandResponse.Ok)
+				throw ImapCommandException.Create ("SEARCH", ic);
+
+			return (SearchResults) ic.UserData;
+		}
+
+		/// <summary>
+		/// Asynchronously searches the folder for messages matching the specified query.
+		/// </summary>
+		/// <remarks>
+		/// Sends a <c>UID SEARCH</c> command with the specified query passed directly to the IMAP server
+		/// with no interpretation by MailKit. This means that the query may contain any arguments that a
+		/// <c>UID SEARCH</c> command is allowed to have according to the IMAP specifications and any
+		/// extensions that are supported, including <c>RETURN</c> parameters.
+		/// </remarks>
+		/// <returns>An array of matching UIDs.</returns>
+		/// <param name="query">The search query.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="query"/> is <c>null</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// <paramref name="query"/> is an empty string.
+		/// </exception>>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server's response contained unexpected tokens.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied with a NO or BAD response.
+		/// </exception>
+		public Task<SearchResults> SearchAsync (string query, CancellationToken cancellationToken = default (CancellationToken))
+		{
+			return Task.Factory.StartNew (() => {
+				lock (SyncRoot) {
+					return Search (query, cancellationToken);
+				}
+			}, cancellationToken, TaskCreationOptions.None, TaskScheduler.Default);
 		}
 
 		/// <summary>
@@ -8606,6 +8778,7 @@ namespace MailKit.Net.Imap {
 			// respond with "* SEARCH ..." instead of "* ESEARCH ..." even when using the extended
 			// search syntax.
 			ic.RegisterUntaggedHandler ("SEARCH", SearchMatches);
+			ic.UserData = new SearchResults ();
 
 			Engine.QueueCommand (ic);
 			Engine.Wait (ic);
@@ -8615,12 +8788,7 @@ namespace MailKit.Net.Imap {
 			if (ic.Response != ImapCommandResponse.Ok)
 				throw ImapCommandException.Create ("SEARCH", ic);
 
-			var results = (SearchResults) ic.UserData;
-
-			if (results == null)
-				return new UniqueId[0];
-
-			return results.UniqueIds;
+			return ((SearchResults) ic.UserData).UniqueIds;
 		}
 
 		/// <summary>
@@ -8713,6 +8881,7 @@ namespace MailKit.Net.Imap {
 				ic.RegisterUntaggedHandler ("ESEARCH", ESearchMatches);
 			else
 				ic.RegisterUntaggedHandler ("SORT", SearchMatches);
+			ic.UserData = new SearchResults ();
 
 			Engine.QueueCommand (ic);
 			Engine.Wait (ic);
@@ -8722,12 +8891,7 @@ namespace MailKit.Net.Imap {
 			if (ic.Response != ImapCommandResponse.Ok)
 				throw ImapCommandException.Create ("SORT", ic);
 
-			var results = (SearchResults) ic.UserData;
-
-			if (results == null)
-				return new UniqueId[0];
-
-			return results.UniqueIds;
+			return ((SearchResults) ic.UserData).UniqueIds;
 		}
 
 		/// <summary>
@@ -8810,6 +8974,7 @@ namespace MailKit.Net.Imap {
 			// respond with "* SEARCH ..." instead of "* ESEARCH ..." even when using the extended
 			// search syntax.
 			ic.RegisterUntaggedHandler ("SEARCH", SearchMatches);
+			ic.UserData = new SearchResults ();
 
 			Engine.QueueCommand (ic);
 			Engine.Wait (ic);
@@ -8819,12 +8984,7 @@ namespace MailKit.Net.Imap {
 			if (ic.Response != ImapCommandResponse.Ok)
 				throw ImapCommandException.Create ("SEARCH", ic);
 
-			var results = (SearchResults) ic.UserData;
-
-			if (results == null)
-				return new UniqueId[0];
-
-			return results.UniqueIds;
+			return ((SearchResults) ic.UserData).UniqueIds;
 		}
 
 		/// <summary>
@@ -8926,6 +9086,7 @@ namespace MailKit.Net.Imap {
 				ic.RegisterUntaggedHandler ("ESEARCH", ESearchMatches);
 			else
 				ic.RegisterUntaggedHandler ("SORT", SearchMatches);
+			ic.UserData = new SearchResults ();
 
 			Engine.QueueCommand (ic);
 			Engine.Wait (ic);
@@ -8935,12 +9096,7 @@ namespace MailKit.Net.Imap {
 			if (ic.Response != ImapCommandResponse.Ok)
 				throw ImapCommandException.Create ("SORT", ic);
 
-			var results = (SearchResults) ic.UserData;
-
-			if (results == null)
-				return new UniqueId[0];
-
-			return results.UniqueIds;
+			return ((SearchResults) ic.UserData).UniqueIds;
 		}
 
 		/// <summary>
@@ -9003,13 +9159,19 @@ namespace MailKit.Net.Imap {
 			var expr = BuildQueryExpression (optimized, args, out charset);
 			var command = "UID SEARCH RETURN (";
 
-			if ((options & SearchOptions.Count) != 0)
-				command += "COUNT ";
-			if ((options & SearchOptions.Min) != 0)
-				command += "MIN ";
-			if ((options & SearchOptions.Max) != 0)
-				command += "MAX ";
-			command = command.TrimEnd ();
+			if (options != SearchOptions.All && options != 0) {
+				if ((options & SearchOptions.All) != 0)
+					command += "ALL ";
+				if ((options & SearchOptions.Relevancy) != 0)
+					command += "RELEVANCY ";
+				if ((options & SearchOptions.Count) != 0)
+					command += "COUNT ";
+				if ((options & SearchOptions.Min) != 0)
+					command += "MIN ";
+				if ((options & SearchOptions.Max) != 0)
+					command += "MAX ";
+				command = command.TrimEnd ();
+			}
 			command += ") ";
 
 			if (charset != null && args.Count > 0 && !Engine.UTF8Enabled)
@@ -9113,13 +9275,19 @@ namespace MailKit.Net.Imap {
 			var order = BuildSortOrder (orderBy);
 
 			var command = "UID SORT RETURN (";
-			if ((options & SearchOptions.Count) != 0)
-				command += "COUNT ";
-			if ((options & SearchOptions.Min) != 0)
-				command += "MIN ";
-			if ((options & SearchOptions.Max) != 0)
-				command += "MAX ";
-			command = command.TrimEnd ();
+			if (options != SearchOptions.All && options != 0) {
+				if ((options & SearchOptions.All) != 0)
+					command += "ALL ";
+				if ((options & SearchOptions.Relevancy) != 0)
+					command += "RELEVANCY ";
+				if ((options & SearchOptions.Count) != 0)
+					command += "COUNT ";
+				if ((options & SearchOptions.Min) != 0)
+					command += "MIN ";
+				if ((options & SearchOptions.Max) != 0)
+					command += "MAX ";
+				command = command.TrimEnd ();
+			}
 			command += ") ";
 
 			command += order + " " + (charset ?? "US-ASCII") + " " + expr + "\r\n";
@@ -9209,13 +9377,19 @@ namespace MailKit.Net.Imap {
 			var expr = BuildQueryExpression (optimized, args, out charset);
 			var command = "UID SEARCH RETURN (";
 
-			if ((options & SearchOptions.Count) != 0)
-				command += "COUNT ";
-			if ((options & SearchOptions.Min) != 0)
-				command += "MIN ";
-			if ((options & SearchOptions.Max) != 0)
-				command += "MAX ";
-			command = command.TrimEnd ();
+			if (options != SearchOptions.All && options != 0) {
+				if ((options & SearchOptions.All) != 0)
+					command += "ALL ";
+				if ((options & SearchOptions.Relevancy) != 0)
+					command += "RELEVANCY ";
+				if ((options & SearchOptions.Count) != 0)
+					command += "COUNT ";
+				if ((options & SearchOptions.Min) != 0)
+					command += "MIN ";
+				if ((options & SearchOptions.Max) != 0)
+					command += "MAX ";
+				command = command.TrimEnd ();
+			}
 			command += ") ";
 
 			if (charset != null && args.Count > 0 && !Engine.UTF8Enabled)
@@ -9328,13 +9502,19 @@ namespace MailKit.Net.Imap {
 			var order = BuildSortOrder (orderBy);
 			var command = "UID SORT RETURN (";
 
-			if ((options & SearchOptions.Count) != 0)
-				command += "COUNT ";
-			if ((options & SearchOptions.Min) != 0)
-				command += "MIN ";
-			if ((options & SearchOptions.Max) != 0)
-				command += "MAX ";
-			command = command.TrimEnd ();
+			if (options != SearchOptions.All && options != 0) {
+				if ((options & SearchOptions.All) != 0)
+					command += "ALL ";
+				if ((options & SearchOptions.Relevancy) != 0)
+					command += "RELEVANCY ";
+				if ((options & SearchOptions.Count) != 0)
+					command += "COUNT ";
+				if ((options & SearchOptions.Min) != 0)
+					command += "MIN ";
+				if ((options & SearchOptions.Max) != 0)
+					command += "MAX ";
+				command = command.TrimEnd ();
+			}
 			command += ") ";
 
 			command += order + " " + (charset ?? "US-ASCII") + " UID " + set + " " + expr + "\r\n";
@@ -9571,9 +9751,11 @@ namespace MailKit.Net.Imap {
 
 		internal void OnFetch (ImapEngine engine, int index, CancellationToken cancellationToken)
 		{
-			var labels = new MessageLabelsChangedEventArgs (index);
-			var flags = new MessageFlagsChangedEventArgs (index);
+			var labelsChangedEventArgs = new MessageLabelsChangedEventArgs (index);
+			var flagsChangedEventArgs = new MessageFlagsChangedEventArgs (index);
+			var modSeqChangedEventArgs = new ModSeqChangedEventArgs (index);
 			var token = engine.ReadToken (cancellationToken);
+			bool modSeqChanged = false;
 			bool labelsChanged = false;
 			bool flagsChanged = false;
 
@@ -9610,8 +9792,10 @@ namespace MailKit.Net.Imap {
 					if (token.Type != ImapTokenType.CloseParen)
 						throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
-					labels.ModSeq = modseq;
-					flags.ModSeq = modseq;
+					modSeqChangedEventArgs.ModSeq = modseq;
+					labelsChangedEventArgs.ModSeq = modseq;
+					flagsChangedEventArgs.ModSeq = modseq;
+					modSeqChanged = true;
 					break;
 				case "UID":
 					token = engine.ReadToken (cancellationToken);
@@ -9619,15 +9803,16 @@ namespace MailKit.Net.Imap {
 					if (token.Type != ImapTokenType.Atom || !uint.TryParse ((string) token.Value, out uid) || uid == 0)
 						throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
-					labels.UniqueId = new UniqueId (UidValidity, uid);
-					flags.UniqueId = new UniqueId (UidValidity, uid);
+					modSeqChangedEventArgs.UniqueId = new UniqueId (UidValidity, uid);
+					labelsChangedEventArgs.UniqueId = new UniqueId (UidValidity, uid);
+					flagsChangedEventArgs.UniqueId = new UniqueId (UidValidity, uid);
 					break;
 				case "FLAGS":
-					flags.Flags = ImapUtils.ParseFlagsList (engine, atom, flags.UserFlags, cancellationToken);
+					flagsChangedEventArgs.Flags = ImapUtils.ParseFlagsList (engine, atom, flagsChangedEventArgs.UserFlags, cancellationToken);
 					flagsChanged = true;
 					break;
 				case "X-GM-LABELS":
-					labels.Labels = ImapUtils.ParseLabelsList (engine, cancellationToken);
+					labelsChangedEventArgs.Labels = ImapUtils.ParseLabelsList (engine, cancellationToken);
 					labelsChanged = true;
 					break;
 				default:
@@ -9639,10 +9824,13 @@ namespace MailKit.Net.Imap {
 				throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "FETCH", token);
 
 			if (flagsChanged)
-				OnMessageFlagsChanged (flags);
+				OnMessageFlagsChanged (flagsChangedEventArgs);
 
 			if (labelsChanged)
-				OnMessageLabelsChanged (labels);
+				OnMessageLabelsChanged (labelsChangedEventArgs);
+
+			if (modSeqChanged)
+				OnModSeqChanged (modSeqChangedEventArgs);
 		}
 
 		internal void OnRecent (int count)

@@ -865,6 +865,30 @@ namespace MailKit {
 		Task<MetadataCollection> GetMetadataAsync (IEnumerable<MetadataTag> tags, CancellationToken cancellationToken = default (CancellationToken));
 
 		/// <summary>
+		/// Gets the specified metadata.
+		/// </summary>
+		/// <remarks>
+		/// Gets the specified metadata.
+		/// </remarks>
+		/// <returns>The requested metadata.</returns>
+		/// <param name="options">The metadata options.</param>
+		/// <param name="tags">The metadata tags.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		MetadataCollection GetMetadata (MetadataOptions options, IEnumerable<MetadataTag> tags, CancellationToken cancellationToken = default (CancellationToken));
+
+		/// <summary>
+		/// Asynchronously gets the specified metadata.
+		/// </summary>
+		/// <remarks>
+		/// Asynchronously gets the specified metadata.
+		/// </remarks>
+		/// <returns>The requested metadata.</returns>
+		/// <param name="options">The metadata options.</param>
+		/// <param name="tags">The metadata tags.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		Task<MetadataCollection> GetMetadataAsync (MetadataOptions options, IEnumerable<MetadataTag> tags, CancellationToken cancellationToken = default (CancellationToken));
+
+		/// <summary>
 		/// Sets the specified metadata.
 		/// </summary>
 		/// <remarks>
@@ -4402,6 +4426,14 @@ namespace MailKit {
 		/// emitetd and the number of summary items returned from the Fetch method.</note>
 		/// </remarks>
 		event EventHandler<MessageSummaryFetchedEventArgs> MessageSummaryFetched;
+
+		/// <summary>
+		/// Occurs when the mod-sequence changed on a message.
+		/// </summary>
+		/// <remarks>
+		/// Emitted when the mod-sequence changed on a message.
+		/// </remarks>
+		event EventHandler<ModSeqChangedEventArgs> ModSeqChanged;
 
 		/// <summary>
 		/// Occurs when the UID validity changes.

@@ -48,6 +48,17 @@ namespace UnitTests.Net.Imap {
 		static readonly Encoding Latin1 = Encoding.GetEncoding (28591);
 		static readonly ImapCapabilities GreetingCapabilities = ImapCapabilities.IMAP4rev1 | ImapCapabilities.Status |
 			ImapCapabilities.Namespace | ImapCapabilities.Unselect;
+		static readonly ImapCapabilities DovecotInitialCapabilities = ImapCapabilities.IMAP4rev1 | ImapCapabilities.Status |
+			ImapCapabilities.LiteralPlus | ImapCapabilities.SaslIR | ImapCapabilities.LoginReferrals | ImapCapabilities.Id |
+			ImapCapabilities.Enable | ImapCapabilities.Idle;
+		static readonly ImapCapabilities DovecotAuthenticatedCapabilities = ImapCapabilities.IMAP4rev1 | ImapCapabilities.Status |
+			ImapCapabilities.LiteralPlus | ImapCapabilities.SaslIR | ImapCapabilities.LoginReferrals | ImapCapabilities.Id |
+			ImapCapabilities.Enable | ImapCapabilities.Idle | ImapCapabilities.Sort | ImapCapabilities.SortDisplay |
+			ImapCapabilities.Thread | ImapCapabilities.MultiAppend | ImapCapabilities.Catenate | ImapCapabilities.Unselect |
+			ImapCapabilities.Children | ImapCapabilities.Namespace | ImapCapabilities.UidPlus | ImapCapabilities.ListExtended |
+			ImapCapabilities.I18NLevel | ImapCapabilities.CondStore | ImapCapabilities.QuickResync | ImapCapabilities.ESearch |
+			ImapCapabilities.ESort | ImapCapabilities.SearchResults | ImapCapabilities.Within | ImapCapabilities.Context |
+			ImapCapabilities.ListStatus | ImapCapabilities.Binary | ImapCapabilities.Move | ImapCapabilities.SpecialUse;
 		static readonly ImapCapabilities GMailInitialCapabilities = ImapCapabilities.IMAP4rev1 | ImapCapabilities.Status |
 			ImapCapabilities.Quota | ImapCapabilities.Idle | ImapCapabilities.Namespace | ImapCapabilities.Id |
 			ImapCapabilities.Children | ImapCapabilities.Unselect | ImapCapabilities.SaslIR | ImapCapabilities.XList |
@@ -60,6 +71,8 @@ namespace UnitTests.Net.Imap {
 			ImapCapabilities.GMailExt1 | ImapCapabilities.LiteralMinus | ImapCapabilities.AppendLimit;
 		static readonly ImapCapabilities AclInitialCapabilities = GMailInitialCapabilities | ImapCapabilities.Acl;
 		static readonly ImapCapabilities AclAuthenticatedCapabilities = GMailAuthenticatedCapabilities | ImapCapabilities.Acl;
+		static readonly ImapCapabilities MetadataInitialCapabilities = GMailInitialCapabilities | ImapCapabilities.Metadata;
+		static readonly ImapCapabilities MetadataAuthenticatedCapabilities = GMailAuthenticatedCapabilities | ImapCapabilities.Metadata;
 
 		static FolderAttributes GetSpecialFolderAttribute (SpecialFolder special)
 		{
@@ -312,6 +325,359 @@ namespace UnitTests.Net.Imap {
 			}
 		}
 
+		static MimeMessage CreateThreadableMessage (string subject, string msgid, string references, DateTimeOffset date)
+		{
+			var message = new MimeMessage ();
+			message.From.Add (new MailboxAddress ("Unit Tests", "unit-tests@mimekit.net"));
+			message.To.Add (new MailboxAddress ("Unit Tests", "unit-tests@mimekit.net"));
+			message.MessageId = msgid;
+			message.Subject = subject;
+			message.Date = date;
+
+			if (references != null) {
+				foreach (var reference in references.Split (' '))
+					message.References.Add (reference);
+			}
+
+			message.Body = new TextPart ("plain") { Text = "This is the message body.\r\n" };
+
+			return message;
+		}
+
+		[Test]
+		public async void TestImapClientDovecot ()
+		{
+			var expectedFlags = MessageFlags.Answered | MessageFlags.Flagged | MessageFlags.Deleted | MessageFlags.Seen | MessageFlags.Draft;
+			var expectedPermanentFlags = expectedFlags | MessageFlags.UserDefined;
+
+			var commands = new List<ImapReplayCommand> ();
+			commands.Add (new ImapReplayCommand ("", "dovecot.greeting.txt"));
+			commands.Add (new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate.txt"));
+			commands.Add (new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"));
+			commands.Add (new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\"\r\n", "dovecot.list-inbox.txt"));
+			commands.Add (new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\"\r\n", "dovecot.list-special-use.txt"));
+			commands.Add (new ImapReplayCommand ("A00000004 ENABLE QRESYNC CONDSTORE\r\n", "dovecot.enable-qresync.txt"));
+			commands.Add (new ImapReplayCommand ("A00000005 LIST \"\" \"%\" RETURN (SUBSCRIBED CHILDREN STATUS (MESSAGES RECENT UIDNEXT UIDVALIDITY UNSEEN HIGHESTMODSEQ))\r\n", "dovecot.list-personal.txt"));
+			commands.Add (new ImapReplayCommand ("A00000006 CREATE UnitTests.\r\n", ImapReplayCommandResponse.OK));
+			commands.Add (new ImapReplayCommand ("A00000007 LIST \"\" UnitTests\r\n", "dovecot.list-unittests.txt"));
+			commands.Add (new ImapReplayCommand ("A00000008 CREATE UnitTests.Messages\r\n", ImapReplayCommandResponse.OK));
+			commands.Add (new ImapReplayCommand ("A00000009 LIST \"\" UnitTests.Messages\r\n", "dovecot.list-unittests-messages.txt"));
+
+			var command = new StringBuilder ("A00000010 APPEND UnitTests.Messages");
+			var internalDates = new List<DateTimeOffset> ();
+			var messages = new List<MimeMessage> ();
+			var flags = new List<MessageFlags> ();
+			var now = DateTimeOffset.Now;
+
+			messages.Add (CreateThreadableMessage ("A", "<a@mimekit.net>", null, now.AddMinutes (-7)));
+			messages.Add (CreateThreadableMessage ("B", "<b@mimekit.net>", "<a@mimekit.net>", now.AddMinutes (-6)));
+			messages.Add (CreateThreadableMessage ("C", "<c@mimekit.net>", "<a@mimekit.net> <b@mimekit.net>", now.AddMinutes (-5)));
+			messages.Add (CreateThreadableMessage ("D", "<d@mimekit.net>", "<a@mimekit.net>", now.AddMinutes (-4)));
+			messages.Add (CreateThreadableMessage ("E", "<e@mimekit.net>", "<c@mimekit.net> <x@mimekit.net> <y@mimekit.net> <z@mimekit.net>", now.AddMinutes (-3)));
+			messages.Add (CreateThreadableMessage ("F", "<f@mimekit.net>", "<b@mimekit.net>", now.AddMinutes (-2)));
+			messages.Add (CreateThreadableMessage ("G", "<g@mimekit.net>", null, now.AddMinutes (-1)));
+			messages.Add (CreateThreadableMessage ("H", "<h@mimekit.net>", null, now));
+
+			for (int i = 0; i < messages.Count; i++) {
+				var message = messages[i];
+				string latin1;
+				long length;
+
+				internalDates.Add (messages[i].Date);
+				flags.Add (MessageFlags.Draft);
+
+				using (var stream = new MemoryStream ()) {
+					var options = FormatOptions.Default.Clone ();
+					options.NewLineFormat = NewLineFormat.Dos;
+
+					message.WriteTo (options, stream);
+					length = stream.Length;
+					stream.Position = 0;
+
+					using (var reader = new StreamReader (stream, Latin1))
+						latin1 = reader.ReadToEnd ();
+				}
+
+				command.AppendFormat (" (\\Draft) \"{0}\" ", ImapUtils.FormatInternalDate (message.Date));
+				command.Append ('{');
+				command.AppendFormat ("{0}+", length);
+				command.Append ("}\r\n");
+				command.Append (latin1);
+			}
+			command.Append ("\r\n");
+			commands.Add (new ImapReplayCommand (command.ToString (), "dovecot.multiappend.txt"));
+			commands.Add (new ImapReplayCommand ("A00000011 SELECT UnitTests.Messages (CONDSTORE)\r\n", "dovecot.select-unittests-messages.txt"));
+			commands.Add (new ImapReplayCommand ("A00000012 UID STORE 1:8 +FLAGS.SILENT (\\Seen)\r\n", "dovecot.store-seen.txt"));
+			commands.Add (new ImapReplayCommand ("A00000013 UID STORE 1:3 +FLAGS.SILENT (\\Answered)\r\n", "dovecot.store-answered.txt"));
+			commands.Add (new ImapReplayCommand ("A00000014 UID STORE 8 +FLAGS.SILENT (\\Deleted)\r\n", "dovecot.store-deleted.txt"));
+			commands.Add (new ImapReplayCommand ("A00000015 UID EXPUNGE 8\r\n", "dovecot.uid-expunge.txt"));
+			commands.Add (new ImapReplayCommand ("A00000016 UID THREAD REFERENCES US-ASCII ALL\r\n", "dovecot.thread-references.txt"));
+			commands.Add (new ImapReplayCommand ("A00000017 UNSELECT\r\n", ImapReplayCommandResponse.OK));
+			commands.Add (new ImapReplayCommand ("A00000018 SELECT UnitTests.Messages (QRESYNC (1436832084 2 1:8))\r\n", "dovecot.select-unittests-messages-qresync.txt"));
+			commands.Add (new ImapReplayCommand ("A00000019 UID SEARCH RETURN (ALL COUNT MIN MAX) MODSEQ 2\r\n", "dovecot.search-changed-since.txt"));
+			commands.Add (new ImapReplayCommand ("A00000020 UID FETCH 1:7 (UID FLAGS MODSEQ)\r\n", "dovecot.fetch-changed.txt"));
+			commands.Add (new ImapReplayCommand ("A00000021 UID FETCH 1:* (UID FLAGS MODSEQ) (CHANGEDSINCE 2 VANISHED)\r\n", "dovecot.fetch-changed2.txt"));
+			commands.Add (new ImapReplayCommand ("A00000022 UID SORT RETURN (ALL COUNT MIN MAX) (REVERSE ARRIVAL) US-ASCII ALL\r\n", "dovecot.sort-reverse-arrival.txt"));
+			commands.Add (new ImapReplayCommand ("A00000023 UID SEARCH RETURN () UNDELETED SEEN\r\n", "dovecot.optimized-search.txt"));
+			commands.Add (new ImapReplayCommand ("A00000024 CREATE UnitTests.Destination\r\n", ImapReplayCommandResponse.OK));
+			commands.Add (new ImapReplayCommand ("A00000025 LIST \"\" UnitTests.Destination\r\n", "dovecot.list-unittests-destination.txt"));
+			commands.Add (new ImapReplayCommand ("A00000026 UID COPY 1:7 UnitTests.Destination\r\n", "dovecot.copy.txt"));
+			commands.Add (new ImapReplayCommand ("A00000027 UID MOVE 1:7 UnitTests.Destination\r\n", "dovecot.move.txt"));
+			commands.Add (new ImapReplayCommand ("A00000028 STATUS UnitTests.Destination (MESSAGES RECENT UIDNEXT UIDVALIDITY UNSEEN HIGHESTMODSEQ)\r\n", "dovecot.status-unittests-destination.txt"));
+
+			using (var client = new ImapClient ()) {
+				try {
+					client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+				} catch (Exception ex) {
+					Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+				}
+
+				Assert.IsTrue (client.IsConnected, "Client failed to connect.");
+
+				Assert.AreEqual (DovecotInitialCapabilities, client.Capabilities);
+				Assert.AreEqual (4, client.AuthenticationMechanisms.Count);
+				Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN"), "Expected SASL PLAIN auth mechanism");
+				Assert.IsTrue (client.AuthenticationMechanisms.Contains ("DIGEST-MD5"), "Expected SASL DIGEST-MD5 auth mechanism");
+				Assert.IsTrue (client.AuthenticationMechanisms.Contains ("CRAM-MD5"), "Expected SASL CRAM-MD5 auth mechanism");
+				Assert.IsTrue (client.AuthenticationMechanisms.Contains ("NTLM"), "Expected SASL NTLM auth mechanism");
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync ("username", "password");
+				} catch (Exception ex) {
+					Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+				}
+
+				Assert.AreEqual (DovecotAuthenticatedCapabilities, client.Capabilities);
+				Assert.AreEqual (1, client.InternationalizationLevel, "Expected I18NLEVEL=1");
+				Assert.IsTrue (client.ThreadingAlgorithms.Contains (ThreadingAlgorithm.OrderedSubject), "Expected THREAD=ORDEREDSUBJECT");
+				Assert.IsTrue (client.ThreadingAlgorithms.Contains (ThreadingAlgorithm.References), "Expected THREAD=REFERENCES");
+
+				// TODO: verify CONTEXT=SEARCH
+
+				try {
+					await client.EnableQuickResyncAsync ();
+				} catch (Exception ex) {
+					Assert.Fail ("Did not expect an exception when enabling QRESYNC: {0}", ex);
+				}
+
+				// take advantage of LIST-STATUS to get top-level personal folders...
+				var statusItems = StatusItems.Count | StatusItems.HighestModSeq | StatusItems.Recent | StatusItems.UidNext | StatusItems.UidValidity | StatusItems.Unread;
+				var personal = client.GetFolder (client.PersonalNamespaces[0]);
+
+				var folders = (await personal.GetSubfoldersAsync (statusItems, false)).ToArray ();
+				Assert.AreEqual (6, folders.Length, "Expected 6 folders");
+
+				var expectedFolderNames = new [] { "Archives", "Drafts", "Junk", "Sent Messages", "Trash", "INBOX" };
+				var expectedUidValidities = new [] { 1436832059, 1436832060, 1436832061, 1436832062, 1436832063, 1436832057 };
+				var expectedHighestModSeq = new [] { 1, 1, 1, 1, 1, 15 };
+				var expectedMessages = new [] { 0, 0, 0, 0, 0, 4 };
+				var expectedUidNext = new [] { 1, 1, 1, 1, 1, 5 };
+				var expectedRecent = new [] { 0, 0, 0, 0, 0, 0 };
+				var expectedUnseen = new [] { 0, 0, 0, 0, 0, 0 };
+
+				for (int i = 0; i < folders.Length; i++) {
+					Assert.AreEqual (expectedFolderNames[i], folders[i].FullName, "FullName did not match");
+					Assert.AreEqual (expectedFolderNames[i], folders[i].Name, "Name did not match");
+					Assert.AreEqual (expectedUidValidities[i], folders[i].UidValidity, "UidValidity did not match");
+					Assert.AreEqual (expectedHighestModSeq[i], folders[i].HighestModSeq, "HighestModSeq did not match");
+					Assert.AreEqual (expectedMessages[i], folders[i].Count, "Count did not match");
+					Assert.AreEqual (expectedRecent[i], folders[i].Recent, "Recent did not match");
+					Assert.AreEqual (expectedUnseen[i], folders[i].Unread, "Unread did not match");
+				}
+
+				var unitTests = await personal.CreateAsync ("UnitTests", false);
+				Assert.AreEqual (FolderAttributes.HasNoChildren, unitTests.Attributes, "Unexpected UnitTests folder attributes");
+
+				var folder = await unitTests.CreateAsync ("Messages", true);
+				Assert.AreEqual (FolderAttributes.HasNoChildren, folder.Attributes, "Unexpected UnitTests.Messages folder attributes");
+				//Assert.AreEqual (FolderAttributes.HasChildren, unitTests.Attributes, "Expected UnitTests Attributes to be updated");
+
+				// Use MULTIAPPEND to append some test messages
+				var appended = await folder.AppendAsync (messages, flags, internalDates);
+				Assert.AreEqual (8, appended.Count, "Unexpected number of messages appended");
+
+				// SELECT the folder so that we can test some stuff
+				var access = await folder.OpenAsync (FolderAccess.ReadWrite);
+				Assert.AreEqual (expectedPermanentFlags, folder.PermanentFlags, "UnitTests.Messages PERMANENTFLAGS");
+				Assert.AreEqual (expectedFlags, folder.AcceptedFlags, "UnitTests.Messages FLAGS");
+				Assert.AreEqual (8, folder.Count, "UnitTests.Messages EXISTS");
+				Assert.AreEqual (8, folder.Recent, "UnitTests.Messages RECENT");
+				Assert.AreEqual (0, folder.FirstUnread, "UnitTests.Messages UNSEEN");
+				Assert.AreEqual (1436832084U, folder.UidValidity, "UnitTests.Messages UIDVALIDITY");
+				Assert.AreEqual (9, folder.UidNext.Value.Id, "UnitTests.Messages UIDNEXT");
+				Assert.AreEqual (2UL, folder.HighestModSeq, "UnitTests.Messages HIGHESTMODSEQ");
+				Assert.AreEqual (FolderAccess.ReadWrite, access, "Expected UnitTests.Messages to be opened in READ-WRITE mode");
+
+				// Keep track of various folder events
+				var flagsChanged = new List<MessageFlagsChangedEventArgs> ();
+				var modSeqChanged = new List<ModSeqChangedEventArgs> ();
+				var vanished = new List<MessagesVanishedEventArgs> ();
+				bool recentChanged = false;
+
+				folder.MessageFlagsChanged += (sender, e) => {
+					flagsChanged.Add (e);
+				};
+
+				folder.ModSeqChanged += (sender, e) => {
+					modSeqChanged.Add (e);
+				};
+
+				folder.MessagesVanished += (sender, e) => {
+					vanished.Add (e);
+				};
+
+				folder.RecentChanged += (sender, e) => {
+					recentChanged = true;
+				};
+
+				// Keep track of UIDVALIDITY and HIGHESTMODSEQ values for our QRESYNC test later
+				var highestModSeq = folder.HighestModSeq;
+				var uidValidity = folder.UidValidity;
+
+				// Make some FLAGS changes to our messages so we can test QRESYNC
+				await folder.AddFlagsAsync (appended, MessageFlags.Seen, true);
+				Assert.AreEqual (0, flagsChanged.Count, "Unexpected number of FlagsChanged events");
+				Assert.AreEqual (8, modSeqChanged.Count, "Unexpected number of ModSeqChanged events");
+				for (int i = 0; i < modSeqChanged.Count; i++) {
+					Assert.AreEqual (i, modSeqChanged[i].Index, "Unexpected modSeqChanged[{0}].Index", i);
+					Assert.AreEqual (i + 1, modSeqChanged[i].UniqueId.Value.Id, "Unexpected modSeqChanged[{0}].UniqueId", i);
+					Assert.AreEqual (3, modSeqChanged[i].ModSeq, "Unexpected modSeqChanged[{0}].ModSeq", i);
+				}
+				Assert.IsFalse (recentChanged, "Unexpected RecentChanged event");
+				modSeqChanged.Clear ();
+				flagsChanged.Clear ();
+
+				var answered = new UniqueIdSet (SortOrder.Ascending);
+				answered.Add (appended[0]); // A
+				answered.Add (appended[1]); // B
+				answered.Add (appended[2]); // C
+				await folder.AddFlagsAsync (answered, MessageFlags.Answered, true);
+				Assert.AreEqual (0, flagsChanged.Count, "Unexpected number of FlagsChanged events");
+				Assert.AreEqual (3, modSeqChanged.Count, "Unexpected number of ModSeqChanged events");
+				for (int i = 0; i < modSeqChanged.Count; i++) {
+					Assert.AreEqual (i, modSeqChanged[i].Index, "Unexpected modSeqChanged[{0}].Index", i);
+					Assert.AreEqual (i + 1, modSeqChanged[i].UniqueId.Value.Id, "Unexpected modSeqChanged[{0}].UniqueId", i);
+					Assert.AreEqual (4, modSeqChanged[i].ModSeq, "Unexpected modSeqChanged[{0}].ModSeq", i);
+				}
+				Assert.IsFalse (recentChanged, "Unexpected RecentChanged event");
+				modSeqChanged.Clear ();
+				flagsChanged.Clear ();
+
+				// Delete some messages so we can test that QRESYNC emits some MessageVanished events
+				// both now *and* when we use QRESYNC to re-open the folder
+				var deleted = new UniqueIdSet (SortOrder.Ascending);
+				deleted.Add (appended[7]); // H
+				await folder.AddFlagsAsync (deleted, MessageFlags.Deleted, true);
+				Assert.AreEqual (0, flagsChanged.Count, "Unexpected number of FlagsChanged events");
+				Assert.AreEqual (1, modSeqChanged.Count, "Unexpected number of ModSeqChanged events");
+				Assert.AreEqual (7, modSeqChanged[0].Index, "Unexpected modSeqChanged[{0}].Index", 0);
+				Assert.AreEqual (8, modSeqChanged[0].UniqueId.Value.Id, "Unexpected modSeqChanged[{0}].UniqueId", 0);
+				Assert.AreEqual (5, modSeqChanged[0].ModSeq, "Unexpected modSeqChanged[{0}].ModSeq", 0);
+				Assert.IsFalse (recentChanged, "Unexpected RecentChanged event");
+				modSeqChanged.Clear ();
+				flagsChanged.Clear ();
+
+				await folder.ExpungeAsync (deleted);
+				Assert.AreEqual (1, vanished.Count, "Expected MessagesVanished event");
+				Assert.AreEqual (1, vanished[0].UniqueIds.Count, "Unexpected number of messages vanished");
+				Assert.AreEqual (8, vanished[0].UniqueIds[0].Id, "Unexpected UID for vanished message");
+				Assert.IsFalse (vanished[0].Earlier, "Expected EARLIER to be false");
+				Assert.IsTrue (recentChanged, "Expected RecentChanged event");
+				recentChanged = false;
+				vanished.Clear ();
+
+				// Verify that THREAD works correctly
+				var threaded = await folder.ThreadAsync (ThreadingAlgorithm.References, SearchQuery.All);
+				Assert.AreEqual (2, threaded.Count, "Unexpected number of root nodes in threaded results");
+
+				// UNSELECT the folder so we can re-open it using QRESYNC
+				await folder.CloseAsync ();
+
+				// Use QRESYNC to get the changes since last time we opened the folder
+				access = await folder.OpenAsync (FolderAccess.ReadWrite, uidValidity, highestModSeq, appended);
+				Assert.AreEqual (FolderAccess.ReadWrite, access, "Expected UnitTests.Messages to be opened in READ-WRITE mode");
+				Assert.AreEqual (7, flagsChanged.Count, "Unexpected number of MessageFlagsChanged events");
+				for (int i = 0; i < flagsChanged.Count; i++) {
+					var messageFlags = MessageFlags.Seen | MessageFlags.Draft;
+
+					if (i < 3)
+						messageFlags |= MessageFlags.Answered;
+
+					Assert.AreEqual (i, flagsChanged[i].Index, "Unexpected value for flagsChanged[{0}].Index", i);
+					Assert.AreEqual ((uint) (i + 1), flagsChanged[i].UniqueId.Value.Id, "Unexpected value for flagsChanged[{0}].UniqueId", i);
+					Assert.AreEqual (messageFlags, flagsChanged[i].Flags, "Unexpected value for flagsChanged[{0}].Flags", i);
+				}
+				flagsChanged.Clear ();
+
+				Assert.AreEqual (1, vanished.Count, "Unexpected number of MessagesVanished events");
+				Assert.IsTrue (vanished[0].Earlier, "Expected VANISHED EARLIER");
+				Assert.AreEqual (1, vanished[0].UniqueIds.Count, "Unexpected number of messages vanished");
+				Assert.AreEqual (8, vanished[0].UniqueIds[0].Id, "Unexpected UID for vanished message");
+				vanished.Clear ();
+
+				// Use SEARCH and FETCH to get the same info
+				var searchOptions = SearchOptions.All | SearchOptions.Count | SearchOptions.Min | SearchOptions.Max;
+				var changed = await folder.SearchAsync (searchOptions, SearchQuery.ChangedSince (highestModSeq));
+				Assert.AreEqual (7, changed.UniqueIds.Count, "Unexpected number of UIDs");
+				Assert.IsTrue (changed.ModSeq.HasValue, "Expected the ModSeq property to be set");
+				Assert.AreEqual (4, changed.ModSeq.Value, "Unexpected ModSeq value");
+				Assert.AreEqual (1, changed.Min.Value.Id, "Unexpected Min");
+				Assert.AreEqual (7, changed.Max.Value.Id, "Unexpected Max");
+				Assert.AreEqual (7, changed.Count, "Unexpected Count");
+
+				var fetched = await folder.FetchAsync (changed.UniqueIds, MessageSummaryItems.UniqueId | MessageSummaryItems.Flags | MessageSummaryItems.ModSeq);
+
+				// or... we could just use a single UID FETCH command like so:
+				fetched = await folder.FetchAsync (UniqueIdRange.All, highestModSeq, MessageSummaryItems.UniqueId | MessageSummaryItems.Flags | MessageSummaryItems.ModSeq);
+				Assert.AreEqual (1, vanished.Count, "Unexpected number of MessagesVanished events");
+				Assert.IsTrue (vanished[0].Earlier, "Expected VANISHED EARLIER");
+				Assert.AreEqual (1, vanished[0].UniqueIds.Count, "Unexpected number of messages vanished");
+				Assert.AreEqual (8, vanished[0].UniqueIds[0].Id, "Unexpected UID for vanished message");
+				vanished.Clear ();
+
+				// Use SORT to order by reverse arrival order
+				var orderBy = new OrderBy[] { new OrderBy (OrderByType.Arrival, SortOrder.Descending) };
+				var sorted = await folder.SearchAsync (searchOptions, SearchQuery.All, orderBy);
+				Assert.AreEqual (7, sorted.UniqueIds.Count, "Unexpected number of UIDs");
+				for (int i = 0; i < sorted.UniqueIds.Count; i++)
+					Assert.AreEqual (7 - i, sorted.UniqueIds[i].Id, "Unexpected value for UniqueId[{0}]", i);
+				Assert.IsFalse (sorted.ModSeq.HasValue, "Expected the ModSeq property to be null");
+				Assert.AreEqual (7, sorted.Min.Value.Id, "Unexpected Min");
+				Assert.AreEqual (1, sorted.Max.Value.Id, "Unexpected Max");
+				Assert.AreEqual (7, sorted.Count, "Unexpected Count");
+
+				// Verify that optimizing NOT queries works correctly
+				var uids = await folder.SearchAsync (SearchQuery.Not (SearchQuery.Deleted).And (SearchQuery.Not (SearchQuery.NotSeen)));
+				Assert.AreEqual (7, uids.Count, "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.AreEqual (i + 1, uids[i].Id, "Unexpected value for uids[{0}]", i);
+
+				// Create a Destination folder to use for copying/moving messages to
+				var destination = await unitTests.CreateAsync ("Destination", true);
+				Assert.AreEqual (FolderAttributes.HasNoChildren, destination.Attributes, "Unexpected UnitTests.Destination folder attributes");
+
+				// COPY messages to the Destination folder
+				var copied = await folder.CopyToAsync (uids, destination);
+				Assert.AreEqual (uids.Count, copied.Source.Count, "Unexpetced Source.Count");
+				Assert.AreEqual (uids.Count, copied.Destination.Count, "Unexpetced Destination.Count");
+
+				// MOVE messages to the Destination folder
+				var moved = await folder.MoveToAsync (uids, destination);
+				Assert.AreEqual (uids.Count, copied.Source.Count, "Unexpetced Source.Count");
+				Assert.AreEqual (uids.Count, copied.Destination.Count, "Unexpetced Destination.Count");
+				Assert.AreEqual (1, vanished.Count, "Expected VANISHED event");
+				vanished.Clear ();
+
+				await destination.StatusAsync (statusItems);
+				Assert.AreEqual (moved.Destination[0].Validity, destination.UidValidity, "Unexpected UIDVALIDITY");
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
 		[Test]
 		public async void TestImapClientGMail ()
 		{
@@ -385,15 +751,16 @@ namespace UnitTests.Net.Imap {
 			commands.Add (new ImapReplayCommand ("A00000082 UID STORE 1:3,5,7:9,11:14,26:29,31,34,41:43,50 FLAGS (\\Answered \\Seen)\r\n", "gmail.set-flags.txt"));
 			commands.Add (new ImapReplayCommand ("A00000083 UID STORE 1:3,5,7:9,11:14,26:29,31,34,41:43,50 -FLAGS.SILENT (\\Answered)\r\n", ImapReplayCommandResponse.OK));
 			commands.Add (new ImapReplayCommand ("A00000084 UID STORE 1:3,5,7:9,11:14,26:29,31,34,41:43,50 +FLAGS.SILENT (\\Deleted)\r\n", "gmail.add-flags.txt"));
-			commands.Add (new ImapReplayCommand ("A00000085 UNSELECT\r\n", ImapReplayCommandResponse.OK));
-			commands.Add (new ImapReplayCommand ("A00000086 SUBSCRIBE UnitTests\r\n", ImapReplayCommandResponse.OK));
-			commands.Add (new ImapReplayCommand ("A00000087 LSUB \"\" \"%\"\r\n", "gmail.lsub-personal.txt"));
-			commands.Add (new ImapReplayCommand ("A00000088 UNSUBSCRIBE UnitTests\r\n", ImapReplayCommandResponse.OK));
-			commands.Add (new ImapReplayCommand ("A00000089 CREATE UnitTests/Dummy\r\n", ImapReplayCommandResponse.OK));
-			commands.Add (new ImapReplayCommand ("A00000090 LIST \"\" UnitTests/Dummy\r\n", "gmail.list-unittests-dummy.txt"));
-			commands.Add (new ImapReplayCommand ("A00000091 RENAME UnitTests RenamedUnitTests\r\n", ImapReplayCommandResponse.OK));
-			commands.Add (new ImapReplayCommand ("A00000092 DELETE RenamedUnitTests\r\n", ImapReplayCommandResponse.OK));
-			commands.Add (new ImapReplayCommand ("A00000093 LOGOUT\r\n", "gmail.logout.txt"));
+			commands.Add (new ImapReplayCommand ("A00000085 CHECK\r\n", ImapReplayCommandResponse.OK));
+			commands.Add (new ImapReplayCommand ("A00000086 UNSELECT\r\n", ImapReplayCommandResponse.OK));
+			commands.Add (new ImapReplayCommand ("A00000087 SUBSCRIBE UnitTests\r\n", ImapReplayCommandResponse.OK));
+			commands.Add (new ImapReplayCommand ("A00000088 LSUB \"\" \"%\"\r\n", "gmail.lsub-personal.txt"));
+			commands.Add (new ImapReplayCommand ("A00000089 UNSUBSCRIBE UnitTests\r\n", ImapReplayCommandResponse.OK));
+			commands.Add (new ImapReplayCommand ("A00000090 CREATE UnitTests/Dummy\r\n", ImapReplayCommandResponse.OK));
+			commands.Add (new ImapReplayCommand ("A00000091 LIST \"\" UnitTests/Dummy\r\n", "gmail.list-unittests-dummy.txt"));
+			commands.Add (new ImapReplayCommand ("A00000092 RENAME UnitTests RenamedUnitTests\r\n", ImapReplayCommandResponse.OK));
+			commands.Add (new ImapReplayCommand ("A00000093 DELETE RenamedUnitTests\r\n", ImapReplayCommandResponse.OK));
+			commands.Add (new ImapReplayCommand ("A00000094 LOGOUT\r\n", "gmail.logout.txt"));
 
 			using (var client = new ImapClient ()) {
 				try {
@@ -490,6 +857,8 @@ namespace UnitTests.Net.Imap {
 				await created.SetFlagsAsync (matches, MessageFlags.Seen | MessageFlags.Answered, false);
 				await created.RemoveFlagsAsync (matches, MessageFlags.Answered, true);
 				await created.AddFlagsAsync (matches, MessageFlags.Deleted, true);
+
+				await created.CheckAsync ();
 
 				await created.CloseAsync ();
 				Assert.IsFalse (created.IsOpen, "Expected the UnitTests folder to be closed.");
@@ -617,6 +986,146 @@ namespace UnitTests.Net.Imap {
 
 				// DELETEACL INBOX smith
 				await client.Inbox.RemoveAccessAsync ("smith");
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		[Test]
+		public async void TestMetadata ()
+		{
+			var commands = new List<ImapReplayCommand> ();
+			commands.Add (new ImapReplayCommand ("", "gmail.greeting.txt"));
+			commands.Add (new ImapReplayCommand ("A00000000 CAPABILITY\r\n", "metadata.capability.txt"));
+			commands.Add (new ImapReplayCommand ("A00000001 AUTHENTICATE PLAIN AHVzZXJuYW1lAHBhc3N3b3Jk\r\n", "metadata.authenticate.txt"));
+			commands.Add (new ImapReplayCommand ("A00000002 NAMESPACE\r\n", "gmail.namespace.txt"));
+			commands.Add (new ImapReplayCommand ("A00000003 LIST \"\" \"INBOX\"\r\n", "gmail.list-inbox.txt"));
+			commands.Add (new ImapReplayCommand ("A00000004 XLIST \"\" \"*\"\r\n", "gmail.xlist.txt"));
+			commands.Add (new ImapReplayCommand ("A00000005 GETMETADATA \"\" /private/comment\r\n", "metadata.getmetadata.txt"));
+			commands.Add (new ImapReplayCommand ("A00000006 GETMETADATA \"\" (MAXSIZE 1024 DEPTH infinity) (/private)\r\n", "metadata.getmetadata-options.txt"));
+			commands.Add (new ImapReplayCommand ("A00000007 GETMETADATA \"\" /private/comment /shared/comment\r\n", "metadata.getmetadata-multi.txt"));
+			commands.Add (new ImapReplayCommand ("A00000008 SETMETADATA \"\" (/private/comment \"this is a comment\")\r\n", "metadata.setmetadata-noprivate.txt"));
+			commands.Add (new ImapReplayCommand ("A00000009 SETMETADATA \"\" (/private/comment \"this comment is too long!\")\r\n", "metadata.setmetadata-maxsize.txt"));
+			commands.Add (new ImapReplayCommand ("A00000010 SETMETADATA \"\" (/private/comment \"this is a private comment\" /shared/comment \"this is a shared comment\")\r\n", "metadata.setmetadata-toomany.txt"));
+			commands.Add (new ImapReplayCommand ("A00000011 SETMETADATA \"\" (/private/comment NIL)\r\n", ImapReplayCommandResponse.OK));
+			commands.Add (new ImapReplayCommand ("A00000012 GETMETADATA INBOX /private/comment\r\n", "metadata.inbox-getmetadata.txt"));
+			commands.Add (new ImapReplayCommand ("A00000013 GETMETADATA INBOX (MAXSIZE 1024 DEPTH infinity) (/private)\r\n", "metadata.inbox-getmetadata-options.txt"));
+			commands.Add (new ImapReplayCommand ("A00000014 GETMETADATA INBOX /private/comment /shared/comment\r\n", "metadata.inbox-getmetadata-multi.txt"));
+			commands.Add (new ImapReplayCommand ("A00000015 SETMETADATA INBOX (/private/comment \"this is a comment\")\r\n", "metadata.inbox-setmetadata-noprivate.txt"));
+			commands.Add (new ImapReplayCommand ("A00000016 SETMETADATA INBOX (/private/comment \"this comment is too long!\")\r\n", "metadata.inbox-setmetadata-maxsize.txt"));
+			commands.Add (new ImapReplayCommand ("A00000017 SETMETADATA INBOX (/private/comment \"this is a private comment\" /shared/comment \"this is a shared comment\")\r\n", "metadata.inbox-setmetadata-toomany.txt"));
+			commands.Add (new ImapReplayCommand ("A00000018 SETMETADATA INBOX (/private/comment NIL)\r\n", ImapReplayCommandResponse.OK));
+
+			using (var client = new ImapClient ()) {
+				MetadataCollection metadata;
+				MetadataOptions options;
+
+				try {
+					client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+				} catch (Exception ex) {
+					Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+				}
+
+				Assert.IsTrue (client.IsConnected, "Client failed to connect.");
+
+				Assert.AreEqual (MetadataInitialCapabilities, client.Capabilities);
+				Assert.AreEqual (4, client.AuthenticationMechanisms.Count);
+				Assert.IsTrue (client.AuthenticationMechanisms.Contains ("XOAUTH"), "Expected SASL XOAUTH auth mechanism");
+				Assert.IsTrue (client.AuthenticationMechanisms.Contains ("XOAUTH2"), "Expected SASL XOAUTH2 auth mechanism");
+				Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN"), "Expected SASL PLAIN auth mechanism");
+				Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN-CLIENTTOKEN"), "Expected SASL PLAIN-CLIENTTOKEN auth mechanism");
+
+				// Note: Do not try XOAUTH2
+				client.AuthenticationMechanisms.Remove ("XOAUTH2");
+
+				try {
+					await client.AuthenticateAsync ("username", "password");
+				} catch (Exception ex) {
+					Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+				}
+
+				Assert.AreEqual (MetadataAuthenticatedCapabilities, client.Capabilities);
+
+				var inbox = client.Inbox;
+				Assert.IsNotNull (inbox, "Expected non-null Inbox folder.");
+				Assert.AreEqual (FolderAttributes.Inbox | FolderAttributes.HasNoChildren, inbox.Attributes, "Expected Inbox attributes to be \\HasNoChildren.");
+
+				foreach (var special in Enum.GetValues (typeof (SpecialFolder)).OfType<SpecialFolder> ()) {
+					var folder = client.GetFolder (special);
+
+					if (special != SpecialFolder.Archive) {
+						var expected = GetSpecialFolderAttribute (special) | FolderAttributes.HasNoChildren;
+
+						Assert.IsNotNull (folder, "Expected non-null {0} folder.", special);
+						Assert.AreEqual (expected, folder.Attributes, "Expected {0} attributes to be \\HasNoChildren.", special);
+					} else {
+						Assert.IsNull (folder, "Expected null {0} folder.", special);
+					}
+				}
+
+				// GETMETADATA
+				Assert.AreEqual ("this is a comment", await client.GetMetadataAsync (MetadataTag.PrivateComment), "The shared comment does not match.");
+
+				options = new MetadataOptions { Depth = int.MaxValue, MaxSize = 1024 };
+				metadata = await client.GetMetadataAsync (options, new [] { new MetadataTag ("/private") });
+				Assert.AreEqual (1, metadata.Count, "Expected 1 metadata value.");
+				Assert.AreEqual (MetadataTag.PrivateComment.Id, metadata[0].Tag.Id, "Metadata tag did not match.");
+				Assert.AreEqual ("this is a private comment", metadata[0].Value, "Metadata value did not match.");
+				Assert.AreEqual (2199, options.LongEntries, "LongEntries does not match.");
+
+				metadata = await client.GetMetadataAsync (new [] { MetadataTag.PrivateComment, MetadataTag.SharedComment });
+				Assert.AreEqual (2, metadata.Count, "Expected 2 metadata values.");
+				Assert.AreEqual (MetadataTag.PrivateComment.Id, metadata[0].Tag.Id, "First metadata tag did not match.");
+				Assert.AreEqual (MetadataTag.SharedComment.Id, metadata[1].Tag.Id, "Second metadata tag did not match.");
+				Assert.AreEqual ("this is a private comment", metadata[0].Value, "First metadata value did not match.");
+				Assert.AreEqual ("this is a shared comment", metadata[1].Value, "Second metadata value did not match.");
+
+				// SETMETADATA
+				Assert.Throws<ImapCommandException> (async () => await client.SetMetadataAsync (new MetadataCollection (new [] {
+					new Metadata (MetadataTag.PrivateComment, "this is a comment")
+				})), "Expected NOPRIVATE RESP-CODE.");
+				Assert.Throws<ImapCommandException> (async () => await client.SetMetadataAsync (new MetadataCollection (new [] {
+					new Metadata (MetadataTag.PrivateComment, "this comment is too long!")
+				})), "Expected MAXSIZE RESP-CODE.");
+				Assert.Throws<ImapCommandException> (async () => await client.SetMetadataAsync (new MetadataCollection (new [] {
+					new Metadata (MetadataTag.PrivateComment, "this is a private comment"),
+					new Metadata (MetadataTag.SharedComment, "this is a shared comment"),
+				})), "Expected TOOMANY RESP-CODE.");
+				await client.SetMetadataAsync (new MetadataCollection (new [] {
+					new Metadata (MetadataTag.PrivateComment, null)
+				}));
+
+				// GETMETADATA folder
+				Assert.AreEqual ("this is a comment", await inbox.GetMetadataAsync (MetadataTag.PrivateComment), "The shared comment does not match.");
+
+				options = new MetadataOptions { Depth = int.MaxValue, MaxSize = 1024 };
+				metadata = await inbox.GetMetadataAsync (options, new [] { new MetadataTag ("/private") });
+				Assert.AreEqual (1, metadata.Count, "Expected 1 metadata value.");
+				Assert.AreEqual (MetadataTag.PrivateComment.Id, metadata[0].Tag.Id, "Metadata tag did not match.");
+				Assert.AreEqual ("this is a private comment", metadata[0].Value, "Metadata value did not match.");
+				Assert.AreEqual (2199, options.LongEntries, "LongEntries does not match.");
+
+				metadata = await inbox.GetMetadataAsync (new [] { MetadataTag.PrivateComment, MetadataTag.SharedComment });
+				Assert.AreEqual (2, metadata.Count, "Expected 2 metadata values.");
+				Assert.AreEqual (MetadataTag.PrivateComment.Id, metadata[0].Tag.Id, "First metadata tag did not match.");
+				Assert.AreEqual (MetadataTag.SharedComment.Id, metadata[1].Tag.Id, "Second metadata tag did not match.");
+				Assert.AreEqual ("this is a private comment", metadata[0].Value, "First metadata value did not match.");
+				Assert.AreEqual ("this is a shared comment", metadata[1].Value, "Second metadata value did not match.");
+
+				// SETMETADATA folder
+				Assert.Throws<ImapCommandException> (async () => await inbox.SetMetadataAsync (new MetadataCollection (new [] {
+					new Metadata (MetadataTag.PrivateComment, "this is a comment")
+				})), "Expected NOPRIVATE RESP-CODE.");
+				Assert.Throws<ImapCommandException> (async () => await inbox.SetMetadataAsync (new MetadataCollection (new [] {
+					new Metadata (MetadataTag.PrivateComment, "this comment is too long!")
+				})), "Expected MAXSIZE RESP-CODE.");
+				Assert.Throws<ImapCommandException> (async () => await inbox.SetMetadataAsync (new MetadataCollection (new [] {
+					new Metadata (MetadataTag.PrivateComment, "this is a private comment"),
+					new Metadata (MetadataTag.SharedComment, "this is a shared comment"),
+				})), "Expected TOOMANY RESP-CODE.");
+				await inbox.SetMetadataAsync (new MetadataCollection (new [] {
+					new Metadata (MetadataTag.PrivateComment, null)
+				}));
 
 				await client.DisconnectAsync (false);
 			}
